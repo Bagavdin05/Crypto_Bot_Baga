@@ -9,7 +9,7 @@ from collections import defaultdict
 import html
 
 # Общая конфигурация
-TELEGRAM_TOKEN = "7574157588:AAEcrPchVsKoyLlxV53HTuQ3bgOZjPlvaOQ"
+TELEGRAM_TOKEN = "8357883688:AAG5E-IwqpbTn7hJ_320wpvKQpNfkm_QQeo"
 TELEGRAM_CHAT_IDS = ["1167694150", "7916502470", "5381553894"]  # ID пользователей с доступом
 
 # Конфигурация спотового арбитража
@@ -871,3 +871,4 @@ if __name__ == "__main__":
     # Запуск асинхронного приложения
 
     asyncio.run(main())
+
