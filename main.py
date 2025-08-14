@@ -22,7 +22,7 @@ SPOT_MIN_ENTRY_AMOUNT_USDT = 5
 SPOT_MAX_ENTRY_AMOUNT_USDT = 100
 SPOT_MAX_IMPACT_PERCENT = 0.5
 SPOT_ORDER_BOOK_DEPTH = 5
-SPOT_MIN_NET_PROFIT_USD = 3
+SPOT_MIN_NET_PROFIT_USD = 4
 
 # Конфигурация фьючерсного арбитража
 FUTURES_THRESHOLD_PERCENT = 0.5
@@ -32,7 +32,7 @@ FUTURES_MIN_VOLUME_USD = 150000
 FUTURES_MIN_EXCHANGES_FOR_PAIR = 2
 FUTURES_MIN_ENTRY_AMOUNT_USDT = 5
 FUTURES_MAX_ENTRY_AMOUNT_USDT = 50
-FUTURES_MIN_NET_PROFIT_USD = 1.5
+FUTURES_MIN_NET_PROFIT_USD = 2.5
 
 # Настройка логгирования
 logging.basicConfig(
@@ -869,4 +869,5 @@ if __name__ == "__main__":
     logging.getLogger("ccxt").setLevel(logging.INFO)
 
     # Запуск асинхронного приложения
+
     asyncio.run(main())
