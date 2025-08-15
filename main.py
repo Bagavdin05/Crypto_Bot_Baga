@@ -21,7 +21,7 @@ SPOT_MIN_VOLUME_USD = 1000000
 SPOT_MIN_ENTRY_AMOUNT_USDT = 5
 SPOT_MAX_ENTRY_AMOUNT_USDT = 120
 SPOT_MAX_IMPACT_PERCENT = 0.5
-SPOT_ORDER_BOOK_DEPTH = 50
+SPOT_ORDER_BOOK_DEPTH = 10
 SPOT_MIN_NET_PROFIT_USD = 4
 
 # Конфигурация фьючерсного арбитража
@@ -122,6 +122,16 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://bingx.com/spot/{s.replace('/', '')}",
         "withdraw_url": lambda c: f"https://bingx.com/en-us/assets/withdraw/{c}",
         "deposit_url": lambda c: f"https://bingx.com/en-us/assets/deposit/{c}"
+    },
+    "phemex": {
+        "api": ccxt.phemex({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT",
+        "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
+        "taker_fee": 0.001,
+        "maker_fee": 0.001,
+        "url_format": lambda s: f"https://phemex.com/spot/trade/{s.replace('/', '')}",
+        "withdraw_url": lambda c: f"https://phemex.com/assets/withdraw?asset={c}",
+        "deposit_url": lambda c: f"https://phemex.com/assets/deposit?asset={c}"
     }
 }
 
@@ -182,12 +192,18 @@ FUTURES_EXCHANGES = {
         "blacklist": []
     },
     "htx": {
-        "api": ccxt.htx({"enableRateLimit": True}),
-        "symbol_format": lambda s: f"{s}/USDT",
-        "is_futures": lambda m: m.get('swap', False) and 'USDT' in m['id'],
+        "api": ccxt.htx({
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "swap",  # Исправление для фьючерсов
+                "fetchMarkets": ["swap"]  # Загружаем только swap-рынки
+            }
+        }),
+        "symbol_format": lambda s: f"{s}/USDT:USDT",
+        "is_futures": lambda m: m.get('swap', False) and m.get('linear', False),
         "taker_fee": 0.0006,
         "maker_fee": 0.0002,
-        "url_format": lambda s: f"https://www.htx.com/futures/exchange/{s.replace('/', '_').lower()}",
+        "url_format": lambda s: f"https://www.htx.com/futures/exchange/{s.split(':')[0].replace('/', '_').lower()}",
         "blacklist": []
     },
     "bingx": {
@@ -197,6 +213,20 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0005,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://bingx.com/en-us/futures/{s.replace('/', '')}",
+        "blacklist": []
+    },
+    "phemex": {
+        "api": ccxt.phemex({
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "swap",  # Исправление для фьючерсов
+            }
+        }),
+        "symbol_format": lambda s: f"{s}/USDT:USDT",
+        "is_futures": lambda m: m.get('swap', False) and m['settle'] == 'USDT',
+        "taker_fee": 0.0006,
+        "maker_fee": 0.0002,
+        "url_format": lambda s: f"https://phemex.com/futures/trade/{s.replace('/', '').replace(':USDT', '')}",
         "blacklist": []
     }
 }
@@ -266,51 +296,35 @@ async def fetch_order_book(exchange, symbol: str, depth: int = SPOT_ORDER_BOOK_D
         return None
 
 
-def calculate_available_volume(order_book, side: str, max_impact_percent: float, max_entry_amount: float):
-    """Расчет доступного объема с учетом максимального воздействия на цену"""
-    if not order_book or 'asks' not in order_book or 'bids' not in order_book:
-        return 0, 0, 0  # volume, avg_price, price_impact
+def calculate_available_volume(order_book, side: str, max_impact_percent: float):
+    if not order_book:
+        return 0
 
     if side == 'buy':
-        if not order_book['asks']:
-            return 0, 0, 0
-        best_price = order_book['asks'][0][0]
-        price_levels = order_book['asks']
-        max_allowed_price = best_price * (1 + max_impact_percent / 100)
-    else:  # sell
-        if not order_book['bids']:
-            return 0, 0, 0
-        best_price = order_book['bids'][0][0]
-        price_levels = order_book['bids']
-        max_allowed_price = best_price * (1 - max_impact_percent / 100)
-
-    total_volume = 0
-    total_value = 0
-
-    for price, volume in price_levels:
-        # Проверяем не превысили ли допустимое изменение цены
-        if (side == 'buy' and price > max_allowed_price) or (side == 'sell' and price < max_allowed_price):
-            break
-
-        # Рассчитываем сколько можем купить/продать с учетом максимальной суммы входа
-        remaining_amount = max_entry_amount - (total_volume * best_price if side == 'buy' else total_volume * price)
-        if remaining_amount <= 0:
-            break
-
-        max_possible_volume = min(volume, remaining_amount / price)
-        if max_possible_volume <= 0:
-            break
-
-        total_volume += max_possible_volume
-        total_value += price * max_possible_volume
-
-    if total_volume == 0:
-        return 0, 0, 0
-
-    avg_price = total_value / total_volume
-    price_impact = abs((avg_price - best_price) / best_price * 100)
-
-    return total_volume, avg_price, price_impact
+        asks = order_book['asks']
+        if not asks:
+            return 0
+        best_ask = asks[0][0]
+        max_allowed_price = best_ask * (1 + max_impact_percent / 100)
+        total_volume = 0
+        for price, volume in asks:
+            if price > max_allowed_price:
+                break
+            total_volume += volume
+        return total_volume
+    elif side == 'sell':
+        bids = order_book['bids']
+        if not bids:
+            return 0
+        best_bid = bids[0][0]
+        min_allowed_price = best_bid * (1 - max_impact_percent / 100)
+        total_volume = 0
+        for price, volume in bids:
+            if price < min_allowed_price:
+                break
+            total_volume += volume
+        return total_volume
+    return 0
 
 
 async def check_deposit_withdrawal_status(exchange, currency: str, check_type: str = 'deposit'):
@@ -521,27 +535,15 @@ async def check_spot_arbitrage():
                                 f"Пропускаем {base}: нет данных стакана")
                             continue
 
-                        # Рассчитываем доступный объем с учетом воздействия на цену
-                        buy_volume, buy_avg_price, buy_impact = calculate_available_volume(
-                            buy_order_book, 'buy', SPOT_MAX_IMPACT_PERCENT, SPOT_MAX_ENTRY_AMOUNT_USDT)
-                        sell_volume, sell_avg_price, sell_impact = calculate_available_volume(
-                            sell_order_book, 'sell', SPOT_MAX_IMPACT_PERCENT, SPOT_MAX_ENTRY_AMOUNT_USDT)
-
-                        logger.debug(
-                            f"Пара {base}: buy_impact={buy_impact:.2f}%, sell_impact={sell_impact:.2f}%"
-                        )
-
-                        if buy_impact > SPOT_MAX_IMPACT_PERCENT or sell_impact > SPOT_MAX_IMPACT_PERCENT:
-                            logger.debug(
-                                f"Пропускаем {base}: воздействие на цену слишком велико"
-                            )
-                            continue
-
+                        # Рассчитываем доступный объем
+                        buy_volume = calculate_available_volume(
+                            buy_order_book, 'buy', SPOT_MAX_IMPACT_PERCENT)
+                        sell_volume = calculate_available_volume(
+                            sell_order_book, 'sell', SPOT_MAX_IMPACT_PERCENT)
                         available_volume = min(buy_volume, sell_volume)
 
                         logger.debug(
-                            f"Пара {base}: доступный объем {available_volume}"
-                        )
+                            f"Пара {base}: доступный объем {available_volume}")
 
                         if available_volume <= 0:
                             continue
@@ -552,8 +554,8 @@ async def check_spot_arbitrage():
 
                         # Рассчитываем минимальную сумму для MIN_NET_PROFIT_USD
                         min_amount_for_profit = calculate_min_entry_amount(
-                            buy_price=buy_avg_price,
-                            sell_price=sell_avg_price,
+                            buy_price=min_ex[1]['price'],
+                            sell_price=max_ex[1]['price'],
                             min_profit=SPOT_MIN_NET_PROFIT_USD,
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee)
@@ -564,9 +566,12 @@ async def check_spot_arbitrage():
                             continue
 
                         # Рассчитываем максимально возможную сумму входа
-                        max_entry_amount = min(
-                            available_volume * buy_avg_price,
-                            SPOT_MAX_ENTRY_AMOUNT_USDT)
+                        max_possible_amount = min(
+                            available_volume,
+                            SPOT_MAX_ENTRY_AMOUNT_USDT / min_ex[1]['price'])
+
+                        max_entry_amount = max_possible_amount * min_ex[1][
+                            'price']
                         min_entry_amount = max(min_amount_for_profit,
                                                SPOT_MIN_ENTRY_AMOUNT_USDT)
 
@@ -578,16 +583,16 @@ async def check_spot_arbitrage():
 
                         # Рассчитываем прибыль
                         profit_min = calculate_profit(
-                            buy_price=buy_avg_price,
-                            sell_price=sell_avg_price,
-                            amount=min_entry_amount / buy_avg_price,
+                            buy_price=min_ex[1]['price'],
+                            sell_price=max_ex[1]['price'],
+                            amount=min_entry_amount / min_ex[1]['price'],
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee)
 
                         profit_max = calculate_profit(
-                            buy_price=buy_avg_price,
-                            sell_price=sell_avg_price,
-                            amount=available_volume,
+                            buy_price=min_ex[1]['price'],
+                            sell_price=max_ex[1]['price'],
+                            amount=max_possible_amount,
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee)
 
@@ -620,16 +625,15 @@ async def check_spot_arbitrage():
                         deposit_url = sell_exchange_config["deposit_url"](base)
 
                         message = (
-                            f"🚀 <b>Спотовый арбитраж (без сдвига цены):</b> <code>{safe_base}</code>\n"
+                            f"🚀 <b>Спотовый арбитраж:</b> <code>{safe_base}</code>\n"
                             f"▫️ <b>Разница цен:</b> {spread:.2f}%\n"
                             f"▫️ <b>Доступный объем:</b> {available_volume:.6f} {safe_base}\n"
-                            f"▫️ <b>Воздействие на цену:</b> покупка {buy_impact:.2f}%, продажа {sell_impact:.2f}%\n"
                             f"▫️ <b>Сумма входа:</b> ${min_entry_amount:.2f}-${max_entry_amount:.2f}\n\n"
-                            f"🟢 <b>Покупка на <a href='{buy_url}'>{min_ex[0].upper()}</a>:</b> ${buy_avg_price:.8f}\n"
+                            f"🟢 <b>Покупка на <a href='{buy_url}'>{min_ex[0].upper()}</a>:</b> ${min_ex[1]['price']:.8f}\n"
                             f"   <b>Объём:</b> {min_volume}\n"
                             f"   <b>Комиссия:</b> {buy_fee * 100:.2f}%\n"
                             f"   <b><a href='{withdraw_url}'>Вывод</a></b>\n\n"
-                            f"🔴 <b>Продажа на <a href='{sell_url}'>{max_ex[0].upper()}</a>:</b> ${sell_avg_price:.8f}\n"
+                            f"🔴 <b>Продажа на <a href='{sell_url}'>{max_ex[0].upper()}</a>:</b> ${max_ex[1]['price']:.8f}\n"
                             f"   <b>Объём:</b> {max_volume}\n"
                             f"   <b>Комиссия:</b> {sell_fee * 100:.2f}%\n"
                             f"   <b><a href='{deposit_url}'>Депозит</a></b>\n\n"
