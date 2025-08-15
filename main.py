@@ -119,7 +119,7 @@ SPOT_EXCHANGES = {
         "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
         "taker_fee": 0.001,
         "maker_fee": 0.001,
-        "url_format": lambda s: f"https://bingx.com/spot/{s.replace('/', '')}",
+        "url_format": lambda s: f"https://bingx.com/en-us/spot/{s.replace('/', '')}",
         "withdraw_url": lambda c: f"https://bingx.com/en-us/assets/withdraw/{c}",
         "deposit_url": lambda c: f"https://bingx.com/en-us/assets/deposit/{c}"
     },
@@ -270,7 +270,13 @@ async def fetch_ticker_data(exchange, symbol: str):
         )
         if ticker:
             price = float(ticker['last']) if ticker.get('last') else None
-            volume = float(ticker['quoteVolume']) if ticker.get('quoteVolume') else None
+
+            # Пытаемся получить объем из разных источников
+            volume = None
+            if ticker.get('quoteVolume') is not None:
+                volume = float(ticker['quoteVolume'])
+            elif ticker.get('baseVolume') is not None and price:
+                volume = float(ticker['baseVolume']) * price
 
             logger.debug(f"Данные тикера {symbol} на {exchange.id}: цена={price}, объем={volume}")
 
@@ -470,9 +476,12 @@ async def check_spot_arbitrage():
                         try:
                             data = await fetch_ticker_data(
                                 exchanges[name]["api"], symbol)
-                            if data and data['price'] is not None and data[
-                                'volume'] is not None:
-                                if data['volume'] >= SPOT_MIN_VOLUME_USD:
+                            if data and data['price'] is not None:
+                                # Если объем известен, проверяем минимальный объем
+                                if data['volume'] is None:
+                                    logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
+                                    ticker_data[name] = data
+                                elif data['volume'] >= SPOT_MIN_VOLUME_USD:
                                     ticker_data[name] = data
                                 else:
                                     logger.debug(
@@ -717,8 +726,12 @@ async def check_futures_arbitrage():
                     for name, symbol in exchange_symbols:
                         try:
                             data = await fetch_ticker_data(exchanges[name]["api"], symbol)
-                            if data and data['price'] is not None and data['volume'] is not None:
-                                if data['volume'] >= FUTURES_MIN_VOLUME_USD:
+                            if data and data['price'] is not None:
+                                # Если объем известен, проверяем минимальный объем
+                                if data['volume'] is None:
+                                    logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
+                                    ticker_data[name] = data
+                                elif data['volume'] >= FUTURES_MIN_VOLUME_USD:
                                     ticker_data[name] = data
                                 else:
                                     logger.debug(f"Объем {symbol} на {name} слишком мал: {data['volume']}")
