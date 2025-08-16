@@ -16,38 +16,31 @@ from collections import defaultdict
 import html
 import re
 
-# Конфигурация
-ADMIN_USER_ID = "1167694150"  # ID администратора
+# Общая конфигурация
 TELEGRAM_TOKEN = "8357883688:AAG5E-IwqpbTn7hJ_320wpvKQpNfkm_QQeo"
 TELEGRAM_CHAT_IDS = ["1167694150", "7916502470", "5381553894"]  # ID пользователей с доступом
 
-# Конфигурация по умолчанию
-DEFAULT_SETTINGS = {
-    # Спот
-    "SPOT_THRESHOLD_PERCENT": 0.5,
-    "SPOT_MAX_THRESHOLD_PERCENT": 40,
-    "SPOT_CHECK_INTERVAL": 30,
-    "SPOT_MIN_EXCHANGES_FOR_PAIR": 2,
-    "SPOT_MIN_VOLUME_USD": 800000,
-    "SPOT_MIN_ENTRY_AMOUNT_USDT": 5,
-    "SPOT_MAX_ENTRY_AMOUNT_USDT": 120,
-    "SPOT_MAX_IMPACT_PERCENT": 0.5,
-    "SPOT_ORDER_BOOK_DEPTH": 10,
-    "SPOT_MIN_NET_PROFIT_USD": 4,
+# Конфигурация спотового арбитража
+SPOT_THRESHOLD_PERCENT = 0.5
+SPOT_MAX_THRESHOLD_PERCENT = 40
+SPOT_CHECK_INTERVAL = 30
+SPOT_MIN_EXCHANGES_FOR_PAIR = 2
+SPOT_MIN_VOLUME_USD = 700000
+SPOT_MIN_ENTRY_AMOUNT_USDT = 5
+SPOT_MAX_ENTRY_AMOUNT_USDT = 120
+SPOT_MAX_IMPACT_PERCENT = 0.5
+SPOT_ORDER_BOOK_DEPTH = 10
+SPOT_MIN_NET_PROFIT_USD = 4
 
-    # Фьючерсы
-    "FUTURES_THRESHOLD_PERCENT": 0.5,
-    "FUTURES_MAX_THRESHOLD_PERCENT": 20,
-    "FUTURES_CHECK_INTERVAL": 30,
-    "FUTURES_MIN_VOLUME_USD": 800000,
-    "FUTURES_MIN_EXCHANGES_FOR_PAIR": 2,
-    "FUTURES_MIN_ENTRY_AMOUNT_USDT": 5,
-    "FUTURES_MAX_ENTRY_AMOUNT_USDT": 60,
-    "FUTURES_MIN_NET_PROFIT_USD": 2.5
-}
-
-# Текущие настройки (инициализируются значениями по умолчанию)
-CURRENT_SETTINGS = DEFAULT_SETTINGS.copy()
+# Конфигурация фьючерсного арбитража
+FUTURES_THRESHOLD_PERCENT = 0.5
+FUTURES_MAX_THRESHOLD_PERCENT = 20
+FUTURES_CHECK_INTERVAL = 30
+FUTURES_MIN_VOLUME_USD = 700000
+FUTURES_MIN_EXCHANGES_FOR_PAIR = 2
+FUTURES_MIN_ENTRY_AMOUNT_USDT = 5
+FUTURES_MAX_ENTRY_AMOUNT_USDT = 60
+FUTURES_MIN_NET_PROFIT_USD = 2.5
 
 # Настройка логгирования
 logging.basicConfig(
@@ -152,7 +145,7 @@ SPOT_EXCHANGES = {
         "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
         "taker_fee": 0.001,
         "maker_fee": 0.001,
-        "url_format": lambda s: f"https://phemex.com/spot/trade/{s.replace('/', '').replace(':USDT', '')}",
+        "url_format": lambda s: f"https://phemex.com/spot/trade/{s.replace('/', '')}",
         "withdraw_url": lambda c: f"https://phemex.com/assets/withdraw?asset={c}",
         "deposit_url": lambda c: f"https://phemex.com/assets/deposit?asset={c}",
         "emoji": "🏛"
@@ -329,7 +322,7 @@ async def fetch_ticker_data(exchange, symbol: str):
         return None
 
 
-async def fetch_order_book(exchange, symbol: str, depth: int = CURRENT_SETTINGS["SPOT_ORDER_BOOK_DEPTH"]):
+async def fetch_order_book(exchange, symbol: str, depth: int = SPOT_ORDER_BOOK_DEPTH):
     try:
         order_book = await asyncio.get_event_loop().run_in_executor(
             None, exchange.fetch_order_book, symbol, depth)
@@ -474,9 +467,9 @@ async def check_spot_arbitrage():
 
     SPOT_EXCHANGES_LOADED = exchanges
 
-    if len(exchanges) < CURRENT_SETTINGS["SPOT_MIN_EXCHANGES_FOR_PAIR"]:
+    if len(exchanges) < SPOT_MIN_EXCHANGES_FOR_PAIR:
         logger.error(
-            f"Недостаточно бирж (нужно минимум {CURRENT_SETTINGS['SPOT_MIN_EXCHANGES_FOR_PAIR']})")
+            f"Недостаточно бирж (нужно минимум {SPOT_MIN_EXCHANGES_FOR_PAIR})")
         return
 
     # Сбор всех торговых пар
@@ -496,7 +489,7 @@ async def check_spot_arbitrage():
     valid_pairs = {
         base: list(pairs)
         for base, pairs in all_pairs.items()
-        if len(pairs) >= CURRENT_SETTINGS["SPOT_MIN_EXCHANGES_FOR_PAIR"]
+        if len(pairs) >= SPOT_MIN_EXCHANGES_FOR_PAIR
     }
 
     if not valid_pairs:
@@ -522,7 +515,7 @@ async def check_spot_arbitrage():
                                 if data['volume'] is None:
                                     logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
                                     ticker_data[name] = data
-                                elif data['volume'] >= CURRENT_SETTINGS["SPOT_MIN_VOLUME_USD"]:
+                                elif data['volume'] >= SPOT_MIN_VOLUME_USD:
                                     ticker_data[name] = data
                                 else:
                                     logger.debug(
@@ -536,7 +529,7 @@ async def check_spot_arbitrage():
                                 f"Ошибка получения данных {base} на {name}: {e}"
                             )
 
-                    if len(ticker_data) < CURRENT_SETTINGS["SPOT_MIN_EXCHANGES_FOR_PAIR"]:
+                    if len(ticker_data) < SPOT_MIN_EXCHANGES_FOR_PAIR:
                         continue
 
                     # Сортируем биржи по цене
@@ -553,8 +546,7 @@ async def check_spot_arbitrage():
                         f"Пара {base}: спред {spread:.2f}% (min: {min_ex[0]} {min_ex[1]['price']}, max: {max_ex[0]} {max_ex[1]['price']})"
                     )
 
-                    if CURRENT_SETTINGS["SPOT_THRESHOLD_PERCENT"] <= spread <= CURRENT_SETTINGS[
-                        "SPOT_MAX_THRESHOLD_PERCENT"]:
+                    if SPOT_THRESHOLD_PERCENT <= spread <= SPOT_MAX_THRESHOLD_PERCENT:
                         # Проверяем доступность депозита и вывода
                         deposit_available = await check_deposit_withdrawal_status(
                             exchanges[max_ex[0]]["api"], base, 'deposit')
@@ -588,9 +580,9 @@ async def check_spot_arbitrage():
 
                         # Рассчитываем доступный объем
                         buy_volume = calculate_available_volume(
-                            buy_order_book, 'buy', CURRENT_SETTINGS["SPOT_MAX_IMPACT_PERCENT"])
+                            buy_order_book, 'buy', SPOT_MAX_IMPACT_PERCENT)
                         sell_volume = calculate_available_volume(
-                            sell_order_book, 'sell', CURRENT_SETTINGS["SPOT_MAX_IMPACT_PERCENT"])
+                            sell_order_book, 'sell', SPOT_MAX_IMPACT_PERCENT)
                         available_volume = min(buy_volume, sell_volume)
 
                         logger.debug(
@@ -607,7 +599,7 @@ async def check_spot_arbitrage():
                         min_amount_for_profit = calculate_min_entry_amount(
                             buy_price=min_ex[1]['price'],
                             sell_price=max_ex[1]['price'],
-                            min_profit=CURRENT_SETTINGS["SPOT_MIN_NET_PROFIT_USD"],
+                            min_profit=SPOT_MIN_NET_PROFIT_USD,
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee)
 
@@ -619,12 +611,12 @@ async def check_spot_arbitrage():
                         # Рассчитываем максимально возможную сумму входа
                         max_possible_amount = min(
                             available_volume,
-                            CURRENT_SETTINGS["SPOT_MAX_ENTRY_AMOUNT_USDT"] / min_ex[1]['price'])
+                            SPOT_MAX_ENTRY_AMOUNT_USDT / min_ex[1]['price'])
 
                         max_entry_amount = max_possible_amount * min_ex[1][
                             'price']
                         min_entry_amount = max(min_amount_for_profit,
-                                               CURRENT_SETTINGS["SPOT_MIN_ENTRY_AMOUNT_USDT"])
+                                               SPOT_MIN_ENTRY_AMOUNT_USDT)
 
                         if min_entry_amount > max_entry_amount:
                             logger.debug(
@@ -702,7 +694,7 @@ async def check_spot_arbitrage():
 
             logger.info(
                 f"Цикл спотового арбитража завершен. Найдено возможностей: {found_opportunities}")
-            await asyncio.sleep(CURRENT_SETTINGS["SPOT_CHECK_INTERVAL"])
+            await asyncio.sleep(SPOT_CHECK_INTERVAL)
 
         except Exception as e:
             logger.error(f"Ошибка в основном цикле спотового арбитража: {e}")
@@ -731,8 +723,8 @@ async def check_futures_arbitrage():
 
     FUTURES_EXCHANGES_LOADED = exchanges
 
-    if len(exchanges) < CURRENT_SETTINGS["FUTURES_MIN_EXCHANGES_FOR_PAIR"]:
-        logger.error(f"Недостаточно бирж (нужно минимум {CURRENT_SETTINGS['FUTURES_MIN_EXCHANGES_FOR_PAIR']})")
+    if len(exchanges) < FUTURES_MIN_EXCHANGES_FOR_PAIR:
+        logger.error(f"Недостаточно бирж (нужно минимум {FUTURES_MIN_EXCHANGES_FOR_PAIR})")
         return
 
     # Сбор всех торговых пар USDT
@@ -751,7 +743,7 @@ async def check_futures_arbitrage():
 
     valid_pairs = {
         base: list(pairs) for base, pairs in all_pairs.items()
-        if len(pairs) >= CURRENT_SETTINGS["FUTURES_MIN_EXCHANGES_FOR_PAIR"]
+        if len(pairs) >= FUTURES_MIN_EXCHANGES_FOR_PAIR
     }
 
     if not valid_pairs:
@@ -776,7 +768,7 @@ async def check_futures_arbitrage():
                                 if data['volume'] is None:
                                     logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
                                     ticker_data[name] = data
-                                elif data['volume'] >= CURRENT_SETTINGS["FUTURES_MIN_VOLUME_USD"]:
+                                elif data['volume'] >= FUTURES_MIN_VOLUME_USD:
                                     ticker_data[name] = data
                                 else:
                                     logger.debug(f"Объем {symbol} на {name} слишком мал: {data['volume']}")
@@ -785,7 +777,7 @@ async def check_futures_arbitrage():
                         except Exception as e:
                             logger.warning(f"Ошибка получения данных {base} на {name}: {e}")
 
-                    if len(ticker_data) < CURRENT_SETTINGS["FUTURES_MIN_EXCHANGES_FOR_PAIR"]:
+                    if len(ticker_data) < FUTURES_MIN_EXCHANGES_FOR_PAIR:
                         continue
 
                     # Сортируем биржи по цене
@@ -799,8 +791,7 @@ async def check_futures_arbitrage():
                     logger.debug(
                         f"Пара {base}: спред {spread:.2f}% (min: {min_ex[0]} {min_ex[1]['price']}, max: {max_ex[0]} {max_ex[1]['price']})")
 
-                    if CURRENT_SETTINGS["FUTURES_THRESHOLD_PERCENT"] <= spread <= CURRENT_SETTINGS[
-                        "FUTURES_MAX_THRESHOLD_PERCENT"]:
+                    if FUTURES_THRESHOLD_PERCENT <= spread <= FUTURES_MAX_THRESHOLD_PERCENT:
                         # Получаем комиссии
                         buy_fee = exchanges[min_ex[0]]["config"]["taker_fee"]
                         sell_fee = exchanges[max_ex[0]]["config"]["taker_fee"]
@@ -809,7 +800,7 @@ async def check_futures_arbitrage():
                         min_amount_for_profit = calculate_min_entry_amount(
                             buy_price=min_ex[1]['price'],
                             sell_price=max_ex[1]['price'],
-                            min_profit=CURRENT_SETTINGS["FUTURES_MIN_NET_PROFIT_USD"],
+                            min_profit=FUTURES_MIN_NET_PROFIT_USD,
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee
                         )
@@ -819,8 +810,8 @@ async def check_futures_arbitrage():
                             continue
 
                         # Рассчитываем максимально возможную сумму входа
-                        max_entry_amount = CURRENT_SETTINGS["FUTURES_MAX_ENTRY_AMOUNT_USDT"]
-                        min_entry_amount = max(min_amount_for_profit, CURRENT_SETTINGS["FUTURES_MIN_ENTRY_AMOUNT_USDT"])
+                        max_entry_amount = FUTURES_MAX_ENTRY_AMOUNT_USDT
+                        min_entry_amount = max(min_amount_for_profit, FUTURES_MIN_ENTRY_AMOUNT_USDT)
 
                         if min_entry_amount > max_entry_amount:
                             logger.debug(f"Пропускаем {base}: min_entry_amount > max_entry_amount")
@@ -888,7 +879,7 @@ async def check_futures_arbitrage():
                     logger.error(f"Ошибка обработки пары {base}: {e}")
 
             logger.info(f"Цикл фьючерсного арбитража завершен. Найдено возможностей: {found_opportunities}")
-            await asyncio.sleep(CURRENT_SETTINGS["FUTURES_CHECK_INTERVAL"])
+            await asyncio.sleep(FUTURES_CHECK_INTERVAL)
 
         except Exception as e:
             logger.error(f"Ошибка в основном цикле фьючерсного арбитража: {e}")
@@ -1056,26 +1047,6 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("❌ Ошибка запроса")
         return
 
-    # Обработка админских кнопок
-    if data[0] == "admin":
-        if user_id != ADMIN_USER_ID:
-            await query.answer("⛔ Только администратор может использовать эту функцию", show_alert=True)
-            return
-            
-        if data[1] == "panel":
-            await show_admin_panel(query)
-        elif data[1] == "spot":
-            await show_spot_settings_help(query)
-        elif data[1] == "futures":
-            await show_futures_settings_help(query)
-        elif data[1] == "reset":
-            await reset_settings_callback(query)
-        elif data[1] == "view":
-            await show_settings_callback(query)
-        elif data[1] == "back":
-            await query.edit_message_text("🔙 Возврат в главное меню")
-        return
-
     market_type = data[0]
     coin = "_".join(data[1:])  # На случай если coin содержит _
 
@@ -1096,309 +1067,30 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
-async def show_admin_panel(query: CallbackQuery):
-    """Показывает панель администратора"""
-    keyboard = [
-        [InlineKeyboardButton("⚙️ Настройки спота", callback_data="admin_spot")],
-        [InlineKeyboardButton("⚙️ Настройки фьючерсов", callback_data="admin_futures")],
-        [InlineKeyboardButton("🔄 Сбросить настройки", callback_data="admin_reset")],
-        [InlineKeyboardButton("👁 Просмотр настроек", callback_data="admin_view")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_back")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(
-        text="👑 <b>Панель администратора</b>\n\nВыберите действие:",
-        parse_mode="HTML",
-        reply_markup=reply_markup
-    )
-
-
-async def show_spot_settings_help(query: CallbackQuery):
-    """Показывает помощь по настройкам спота"""
-    help_text = (
-        "⚙️ <b>Настройки спотового арбитража</b>\n\n"
-        "Используйте команду в формате:\n"
-        "<code>/set_spot min_threshold=0.5 max_threshold=40 interval=30 min_exchanges=2 "
-        "min_volume=800000 min_entry=5 max_entry=120 max_impact=0.5 depth=10 min_profit=4</code>\n\n"
-        "🔹 <b>Параметры:</b>\n"
-        "min_threshold - Минимальный спред (%)\n"
-        "max_threshold - Максимальный спред (%)\n"
-        "interval - Интервал проверки (сек)\n"
-        "min_exchanges - Минимальное количество бирж\n"
-        "min_volume - Минимальный объем (USD)\n"
-        "min_entry - Минимальная сумма входа (USDT)\n"
-        "max_entry - Максимальная сумма входа (USDT)\n"
-        "max_impact - Максимальное влияние на цену (%)\n"
-        "depth - Глубина стакана\n"
-        "min_profit - Минимальная прибыль (USD)\n\n"
-        "Пример: <code>/set_spot min_threshold=1.0 max_threshold=30 interval=45 min_volume=1000000</code>"
-    )
-    
-    await query.edit_message_text(
-        text=help_text,
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]])
-    )
-
-
-async def show_futures_settings_help(query: CallbackQuery):
-    """Показывает помощь по настройкам фьючерсов"""
-    help_text = (
-        "⚙️ <b>Настройки фьючерсного арбитража</b>\n\n"
-        "Используйте команду в формате:\n"
-        "<code>/set_futures min_threshold=0.5 max_threshold=20 interval=30 "
-        "min_volume=800000 min_exchanges=2 min_entry=5 max_entry=60 min_profit=2.5</code>\n\n"
-        "🔹 <b>Параметры:</b>\n"
-        "min_threshold - Минимальный спред (%)\n"
-        "max_threshold - Максимальный спред (%)\n"
-        "interval - Интервал проверки (сек)\n"
-        "min_volume - Минимальный объем (USD)\n"
-        "min_exchanges - Минимальное количество бирж\n"
-        "min_entry - Минимальная сумма входа (USDT)\n"
-        "max_entry - Максимальная сумма входа (USDT)\n"
-        "min_profit - Минимальная прибыль (USD)\n\n"
-        "Пример: <code>/set_futures min_threshold=0.8 max_threshold=25 interval=40 min_volume=1500000</code>"
-    )
-    
-    await query.edit_message_text(
-        text=help_text,
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]])
-    )
-
-
-async def reset_settings_callback(query: CallbackQuery):
-    """Сбрасывает настройки к значениям по умолчанию"""
-    global CURRENT_SETTINGS
-    CURRENT_SETTINGS = DEFAULT_SETTINGS.copy()
-    
-    await query.edit_message_text(
-        text="✅ Все настройки сброшены к значениям по умолчанию!",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]])
-    )
-
-
-async def show_settings_callback(query: CallbackQuery):
-    """Показывает текущие настройки"""
-    settings_message = (
-        "⚙️ <b>Текущие настройки арбитража</b>\n\n"
-        "<b>Спотовый арбитраж:</b>\n"
-        f"Минимальный спред: {CURRENT_SETTINGS['SPOT_THRESHOLD_PERCENT']}%\n"
-        f"Максимальный спред: {CURRENT_SETTINGS['SPOT_MAX_THRESHOLD_PERCENT']}%\n"
-        f"Интервал проверки: {CURRENT_SETTINGS['SPOT_CHECK_INTERVAL']} сек\n"
-        f"Минимальное кол-во бирж: {CURRENT_SETTINGS['SPOT_MIN_EXCHANGES_FOR_PAIR']}\n"
-        f"Минимальный объем: ${CURRENT_SETTINGS['SPOT_MIN_VOLUME_USD']:,.0f}\n"
-        f"Минимальная сумма входа: ${CURRENT_SETTINGS['SPOT_MIN_ENTRY_AMOUNT_USDT']}\n"
-        f"Максимальная сумма входа: ${CURRENT_SETTINGS['SPOT_MAX_ENTRY_AMOUNT_USDT']}\n"
-        f"Максимальное влияние на цену: {CURRENT_SETTINGS['SPOT_MAX_IMPACT_PERCENT']}%\n"
-        f"Глубина стакана: {CURRENT_SETTINGS['SPOT_ORDER_BOOK_DEPTH']}\n"
-        f"Минимальная прибыль: ${CURRENT_SETTINGS['SPOT_MIN_NET_PROFIT_USD']}\n\n"
-        "<b>Фьючерсный арбитраж:</b>\n"
-        f"Минимальный спред: {CURRENT_SETTINGS['FUTURES_THRESHOLD_PERCENT']}%\n"
-        f"Максимальный спред: {CURRENT_SETTINGS['FUTURES_MAX_THRESHOLD_PERCENT']}%\n"
-        f"Интервал проверки: {CURRENT_SETTINGS['FUTURES_CHECK_INTERVAL']} сек\n"
-        f"Минимальный объем: ${CURRENT_SETTINGS['FUTURES_MIN_VOLUME_USD']:,.0f}\n"
-        f"Минимальное кол-во бирж: {CURRENT_SETTINGS['FUTURES_MIN_EXCHANGES_FOR_PAIR']}\n"
-        f"Минимальная сумма входа: ${CURRENT_SETTINGS['FUTURES_MIN_ENTRY_AMOUNT_USDT']}\n"
-        f"Максимальная сумма входа: ${CURRENT_SETTINGS['FUTURES_MAX_ENTRY_AMOUNT_USDT']}\n"
-        f"Минимальная прибыль: ${CURRENT_SETTINGS['FUTURES_MIN_NET_PROFIT_USD']}"
-    )
-    
-    await query.edit_message_text(
-        text=settings_message,
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]])
-    )
-
-
 async def handle_any_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка всех сообщений и команд от пользователей"""
     user_id = str(update.effective_user.id)
-    message_text = update.message.text.strip()
 
-    # Проверка доступа
-    if user_id not in TELEGRAM_CHAT_IDS:
-        await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
-        return
-
-    # Обработка команд администратора
-    if user_id == ADMIN_USER_ID:
-        if message_text.startswith('/set_spot'):
-            await set_spot_settings(update, context)
-            return
-        elif message_text.startswith('/set_futures'):
-            await set_futures_settings(update, context)
-            return
-        elif message_text.startswith('/reset_settings'):
-            await reset_settings(update, context)
-            return
-        elif message_text == '/admin':
-            keyboard = [[InlineKeyboardButton("👑 Открыть панель администратора", callback_data="admin_panel")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                "Панель администратора:",
-                reply_markup=reply_markup
-            )
-            return
-
-    # Основные команды для всех пользователей
-    if message_text in ['/start', '/help']:
-        response = (
-            "🤖 <b>Crypto Arbitrage Bot</b>\n\n"
-            "🔍 Для поиска цен на монету просто введите ее название (например <code>BTC</code> или <code>ETH</code>)\n\n"
-            "⚙️ Доступные команды:\n"
-            "/settings - Текущие настройки\n\n"
-            "📊 Бот автоматически ищет арбитражные возможности на спотовом и фьючерсном рынках и присылает уведомления"
-        )
-        await update.message.reply_text(response, parse_mode="HTML")
-    elif message_text == '/settings':
-        await show_settings(update, context)
+    # Если сообщение начинается с /, это команда
+    if update.message.text.startswith('/'):
+        if user_id in TELEGRAM_CHAT_IDS:
+            # Для команд /start и /help
+            if update.message.text.lower() in ['/start', '/help']:
+                response = (
+                    "🤖 <b>Crypto Arbitrage Bot</b>\n\n"
+                    "🔍 Для поиска цен на монету просто введите ее название (например <code>BTC</code> или <code>ETH</code>)\n\n"
+                    "📊 Бот автоматически ищет арбитражные возможности на спотовом и фьючерсном рынках и присылает уведомления"
+                )
+                await update.message.reply_text(response, parse_mode="HTML")
+            else:
+                # Для других команд
+                response = "🔍 Для поиска цен на монету введите ее название"
+                await update.message.reply_text(response)
+        else:
+            await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
     else:
         # Обработка текстовых сообщений (поиск монеты)
         await handle_coin_search(update, context)
-
-
-async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает текущие настройки"""
-    settings_message = (
-        "⚙️ <b>Текущие настройки арбитража</b>\n\n"
-        "<b>Спотовый арбитраж:</b>\n"
-        f"Минимальный спред: {CURRENT_SETTINGS['SPOT_THRESHOLD_PERCENT']}%\n"
-        f"Максимальный спред: {CURRENT_SETTINGS['SPOT_MAX_THRESHOLD_PERCENT']}%\n"
-        f"Интервал проверки: {CURRENT_SETTINGS['SPOT_CHECK_INTERVAL']} сек\n"
-        f"Минимальное кол-во бирж: {CURRENT_SETTINGS['SPOT_MIN_EXCHANGES_FOR_PAIR']}\n"
-        f"Минимальный объем: ${CURRENT_SETTINGS['SPOT_MIN_VOLUME_USD']:,.0f}\n"
-        f"Минимальная сумма входа: ${CURRENT_SETTINGS['SPOT_MIN_ENTRY_AMOUNT_USDT']}\n"
-        f"Максимальная сумма входа: ${CURRENT_SETTINGS['SPOT_MAX_ENTRY_AMOUNT_USDT']}\n"
-        f"Максимальное влияние на цену: {CURRENT_SETTINGS['SPOT_MAX_IMPACT_PERCENT']}%\n"
-        f"Глубина стакана: {CURRENT_SETTINGS['SPOT_ORDER_BOOK_DEPTH']}\n"
-        f"Минимальная прибыль: ${CURRENT_SETTINGS['SPOT_MIN_NET_PROFIT_USD']}\n\n"
-        "<b>Фьючерсный арбитраж:</b>\n"
-        f"Минимальный спред: {CURRENT_SETTINGS['FUTURES_THRESHOLD_PERCENT']}%\n"
-        f"Максимальный спред: {CURRENT_SETTINGS['FUTURES_MAX_THRESHOLD_PERCENT']}%\n"
-        f"Интервал проверки: {CURRENT_SETTINGS['FUTURES_CHECK_INTERVAL']} сек\n"
-        f"Минимальный объем: ${CURRENT_SETTINGS['FUTURES_MIN_VOLUME_USD']:,.0f}\n"
-        f"Минимальное кол-во бирж: {CURRENT_SETTINGS['FUTURES_MIN_EXCHANGES_FOR_PAIR']}\n"
-        f"Минимальная сумма входа: ${CURRENT_SETTINGS['FUTURES_MIN_ENTRY_AMOUNT_USDT']}\n"
-        f"Максимальная сумма входа: ${CURRENT_SETTINGS['FUTURES_MAX_ENTRY_AMOUNT_USDT']}\n"
-        f"Минимальная прибыль: ${CURRENT_SETTINGS['FUTURES_MIN_NET_PROFIT_USD']}"
-    )
-
-    await update.message.reply_text(settings_message, parse_mode="HTML")
-
-
-async def set_spot_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Устанавливает новые настройки для спотового арбитража"""
-    if not context.args:
-        await update.message.reply_text(
-            "ℹ️ Использование: /set_spot min_threshold=0.5 max_threshold=40 interval=30 "
-            "min_exchanges=2 min_volume=800000 min_entry=5 max_entry=120 max_impact=0.5 depth=10 min_profit=4"
-        )
-        return
-
-    # Парсинг аргументов
-    params = {}
-    for arg in context.args:
-        if '=' not in arg:
-            continue
-
-        key, value = arg.split('=', 1)
-        key = key.lower()
-
-        try:
-            # Преобразование числовых параметров
-            if key in ['min_threshold', 'max_threshold', 'max_impact']:
-                params[key] = float(value)
-            elif key in ['min_volume', 'min_entry', 'max_entry', 'min_profit']:
-                params[key] = float(value)
-            elif key in ['interval', 'min_exchanges', 'depth']:
-                params[key] = int(value)
-        except ValueError:
-            await update.message.reply_text(f"⚠️ Ошибка в значении параметра {key}")
-            return
-
-    # Обновление настроек
-    if 'min_threshold' in params:
-        CURRENT_SETTINGS["SPOT_THRESHOLD_PERCENT"] = params['min_threshold']
-    if 'max_threshold' in params:
-        CURRENT_SETTINGS["SPOT_MAX_THRESHOLD_PERCENT"] = params['max_threshold']
-    if 'interval' in params:
-        CURRENT_SETTINGS["SPOT_CHECK_INTERVAL"] = params['interval']
-    if 'min_exchanges' in params:
-        CURRENT_SETTINGS["SPOT_MIN_EXCHANGES_FOR_PAIR"] = params['min_exchanges']
-    if 'min_volume' in params:
-        CURRENT_SETTINGS["SPOT_MIN_VOLUME_USD"] = params['min_volume']
-    if 'min_entry' in params:
-        CURRENT_SETTINGS["SPOT_MIN_ENTRY_AMOUNT_USDT"] = params['min_entry']
-    if 'max_entry' in params:
-        CURRENT_SETTINGS["SPOT_MAX_ENTRY_AMOUNT_USDT"] = params['max_entry']
-    if 'max_impact' in params:
-        CURRENT_SETTINGS["SPOT_MAX_IMPACT_PERCENT"] = params['max_impact']
-    if 'depth' in params:
-        CURRENT_SETTINGS["SPOT_ORDER_BOOK_DEPTH"] = params['depth']
-    if 'min_profit' in params:
-        CURRENT_SETTINGS["SPOT_MIN_NET_PROFIT_USD"] = params['min_profit']
-
-    await update.message.reply_text("✅ Настройки спотового арбитража обновлены!")
-
-
-async def set_futures_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Устанавливает новые настройки для фьючерсного арбитража"""
-    if not context.args:
-        await update.message.reply_text(
-            "ℹ️ Использование: /set_futures min_threshold=0.5 max_threshold=20 interval=30 "
-            "min_volume=800000 min_exchanges=2 min_entry=5 max_entry=60 min_profit=2.5"
-        )
-        return
-
-    # Парсинг аргументов
-    params = {}
-    for arg in context.args:
-        if '=' not in arg:
-            continue
-
-        key, value = arg.split('=', 1)
-        key = key.lower()
-
-        try:
-            # Преобразование числовых параметров
-            if key in ['min_threshold', 'max_threshold']:
-                params[key] = float(value)
-            elif key in ['min_volume', 'min_entry', 'max_entry', 'min_profit']:
-                params[key] = float(value)
-            elif key in ['interval', 'min_exchanges']:
-                params[key] = int(value)
-        except ValueError:
-            await update.message.reply_text(f"⚠️ Ошибка в значении параметра {key}")
-            return
-
-    # Обновление настроек
-    if 'min_threshold' in params:
-        CURRENT_SETTINGS["FUTURES_THRESHOLD_PERCENT"] = params['min_threshold']
-    if 'max_threshold' in params:
-        CURRENT_SETTINGS["FUTURES_MAX_THRESHOLD_PERCENT"] = params['max_threshold']
-    if 'interval' in params:
-        CURRENT_SETTINGS["FUTURES_CHECK_INTERVAL"] = params['interval']
-    if 'min_volume' in params:
-        CURRENT_SETTINGS["FUTURES_MIN_VOLUME_USD"] = params['min_volume']
-    if 'min_exchanges' in params:
-        CURRENT_SETTINGS["FUTURES_MIN_EXCHANGES_FOR_PAIR"] = params['min_exchanges']
-    if 'min_entry' in params:
-        CURRENT_SETTINGS["FUTURES_MIN_ENTRY_AMOUNT_USDT"] = params['min_entry']
-    if 'max_entry' in params:
-        CURRENT_SETTINGS["FUTURES_MAX_ENTRY_AMOUNT_USDT"] = params['max_entry']
-    if 'min_profit' in params:
-        CURRENT_SETTINGS["FUTURES_MIN_NET_PROFIT_USD"] = params['min_profit']
-
-    await update.message.reply_text("✅ Настройки фьючерсного арбитража обновлены!")
-
-
-async def reset_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сбрасывает настройки к значениям по умолчанию"""
-    global CURRENT_SETTINGS
-    CURRENT_SETTINGS = DEFAULT_SETTINGS.copy()
-    await update.message.reply_text("✅ Все настройки сброшены к значениям по умолчанию!")
 
 
 async def start_bot():
@@ -1406,14 +1098,17 @@ async def start_bot():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     # Регистрируем обработчики:
+    # 1. Для любых команд (начинающихся с /)
     application.add_handler(CommandHandler("start", handle_any_message))
     application.add_handler(CommandHandler("help", handle_any_message))
-    application.add_handler(CommandHandler("settings", show_settings))
-    application.add_handler(CommandHandler("admin", handle_any_message))
 
-    # Обработчики сообщений
+    # 2. Обработчик для всех остальных команд (которые не указаны явно)
     application.add_handler(MessageHandler(filters.COMMAND, handle_any_message))
+
+    # 3. Обработчик для обычных текстовых сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_any_message))
+
+    # 4. Обработчик для нажатий на кнопки
     application.add_handler(CallbackQueryHandler(handle_button_click))
 
     # Инициализация и запуск
