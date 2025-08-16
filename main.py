@@ -1,12 +1,20 @@
 import ccxt
 import asyncio
-from telegram import Bot, Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+    CallbackQueryHandler
+)
 from telegram.error import TelegramError
 import logging
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 import html
+import re
 
 # Общая конфигурация
 TELEGRAM_TOKEN = "8357883688:AAG5E-IwqpbTn7hJ_320wpvKQpNfkm_QQeo"
@@ -17,7 +25,7 @@ SPOT_THRESHOLD_PERCENT = 0.5
 SPOT_MAX_THRESHOLD_PERCENT = 40
 SPOT_CHECK_INTERVAL = 30
 SPOT_MIN_EXCHANGES_FOR_PAIR = 2
-SPOT_MIN_VOLUME_USD = 1000000
+SPOT_MIN_VOLUME_USD = 800000
 SPOT_MIN_ENTRY_AMOUNT_USDT = 5
 SPOT_MAX_ENTRY_AMOUNT_USDT = 120
 SPOT_MAX_IMPACT_PERCENT = 0.5
@@ -28,7 +36,7 @@ SPOT_MIN_NET_PROFIT_USD = 4
 FUTURES_THRESHOLD_PERCENT = 0.5
 FUTURES_MAX_THRESHOLD_PERCENT = 20
 FUTURES_CHECK_INTERVAL = 30
-FUTURES_MIN_VOLUME_USD = 1000000
+FUTURES_MIN_VOLUME_USD = 800000
 FUTURES_MIN_EXCHANGES_FOR_PAIR = 2
 FUTURES_MIN_ENTRY_AMOUNT_USDT = 5
 FUTURES_MAX_ENTRY_AMOUNT_USDT = 60
@@ -51,7 +59,8 @@ SPOT_EXCHANGES = {
         "maker_fee": 0.001,
         "url_format": lambda s: f"https://www.bybit.com/trade/spot/{s.replace('/', '')}",
         "withdraw_url": lambda c: f"https://www.bybit.com/user/assets/withdraw",
-        "deposit_url": lambda c: f"https://www.bybit.com/user/assets/deposit"
+        "deposit_url": lambda c: f"https://www.bybit.com/user/assets/deposit",
+        "emoji": "🏛"
     },
     "mexc": {
         "api": ccxt.mexc({"enableRateLimit": True}),
@@ -61,7 +70,8 @@ SPOT_EXCHANGES = {
         "maker_fee": 0.002,
         "url_format": lambda s: f"https://www.mexc.com/exchange/{s.replace('/', '_')}",
         "withdraw_url": lambda c: f"https://www.mexc.com/ru-RU/assets/withdraw/{c}",
-        "deposit_url": lambda c: f"https://www.mexc.com/ru-RU/assets/deposit/{c}"
+        "deposit_url": lambda c: f"https://www.mexc.com/ru-RU/assets/deposit/{c}",
+        "emoji": "🏛"
     },
     "okx": {
         "api": ccxt.okx({"enableRateLimit": True}),
@@ -71,7 +81,8 @@ SPOT_EXCHANGES = {
         "maker_fee": 0.0008,
         "url_format": lambda s: f"https://www.okx.com/trade-spot/{s.replace('/', '-').lower()}",
         "withdraw_url": lambda c: f"https://www.okx.com/ru/balance/withdrawal/{c.lower()}-chain",
-        "deposit_url": lambda c: f"https://www.okx.com/ru/balance/recharge/{c.lower()}"
+        "deposit_url": lambda c: f"https://www.okx.com/ru/balance/recharge/{c.lower()}",
+        "emoji": "🏛"
     },
     "gate": {
         "api": ccxt.gateio({"enableRateLimit": True}),
@@ -81,7 +92,8 @@ SPOT_EXCHANGES = {
         "maker_fee": 0.002,
         "url_format": lambda s: f"https://www.gate.io/trade/{s.replace('/', '_')}",
         "withdraw_url": lambda c: f"https://www.gate.io/myaccount/withdraw/{c}",
-        "deposit_url": lambda c: f"https://www.gate.io/myaccount/deposit/{c}"
+        "deposit_url": lambda c: f"https://www.gate.io/myaccount/deposit/{c}",
+        "emoji": "🏛"
     },
     "bitget": {
         "api": ccxt.bitget({"enableRateLimit": True}),
@@ -91,7 +103,8 @@ SPOT_EXCHANGES = {
         "maker_fee": 0.001,
         "url_format": lambda s: f"https://www.bitget.com/spot/{s.replace('/', '')}_SPBL",
         "withdraw_url": lambda c: f"https://www.bitget.com/ru/asset/withdraw?coinId={c}",
-        "deposit_url": lambda c: f"https://www.bitget.com/ru/asset/recharge?coinId={c}"
+        "deposit_url": lambda c: f"https://www.bitget.com/ru/asset/recharge?coinId={c}",
+        "emoji": "🏛"
     },
     "kucoin": {
         "api": ccxt.kucoin({"enableRateLimit": True}),
@@ -101,7 +114,8 @@ SPOT_EXCHANGES = {
         "maker_fee": 0.001,
         "url_format": lambda s: f"https://www.kucoin.com/trade/{s.replace('/', '-')}",
         "withdraw_url": lambda c: f"https://www.kucoin.com/ru/assets/withdraw/{c}",
-        "deposit_url": lambda c: f"https://www.kucoin.com/ru/assets/coin/{c}"
+        "deposit_url": lambda c: f"https://www.kucoin.com/ru/assets/coin/{c}",
+        "emoji": "🏛"
     },
     "htx": {
         "api": ccxt.htx({"enableRateLimit": True}),
@@ -111,7 +125,8 @@ SPOT_EXCHANGES = {
         "maker_fee": 0.002,
         "url_format": lambda s: f"https://www.htx.com/trade/{s.replace('/', '_').lower()}",
         "withdraw_url": lambda c: f"https://www.htx.com/ru-ru/finance/withdraw/{c.lower()}",
-        "deposit_url": lambda c: f"https://www.htx.com/ru-ru/finance/deposit/{c.lower()}"
+        "deposit_url": lambda c: f"https://www.htx.com/ru-ru/finance/deposit/{c.lower()}",
+        "emoji": "🏛"
     },
     "bingx": {
         "api": ccxt.bingx({"enableRateLimit": True}),
@@ -121,7 +136,8 @@ SPOT_EXCHANGES = {
         "maker_fee": 0.001,
         "url_format": lambda s: f"https://bingx.com/en-us/spot/{s.replace('/', '')}",
         "withdraw_url": lambda c: f"https://bingx.com/en-us/assets/withdraw/{c}",
-        "deposit_url": lambda c: f"https://bingx.com/en-us/assets/deposit/{c}"
+        "deposit_url": lambda c: f"https://bingx.com/en-us/assets/deposit/{c}",
+        "emoji": "🏛"
     },
     "phemex": {
         "api": ccxt.phemex({"enableRateLimit": True}),
@@ -131,7 +147,8 @@ SPOT_EXCHANGES = {
         "maker_fee": 0.001,
         "url_format": lambda s: f"https://phemex.com/spot/trade/{s.replace('/', '')}",
         "withdraw_url": lambda c: f"https://phemex.com/assets/withdraw?asset={c}",
-        "deposit_url": lambda c: f"https://phemex.com/assets/deposit?asset={c}"
+        "deposit_url": lambda c: f"https://phemex.com/assets/deposit?asset={c}",
+        "emoji": "🏛"
     }
 }
 
@@ -144,7 +161,8 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0006,
         "maker_fee": 0.0001,
         "url_format": lambda s: f"https://www.bybit.com/trade/usdt/{s.replace('/', '').replace(':USDT', '')}",
-        "blacklist": ["BTC", "ETH"]
+        "blacklist": ["BTC", "ETH"],
+        "emoji": "🏛"
     },
     "mexc": {
         "api": ccxt.mexc({"enableRateLimit": True}),
@@ -153,7 +171,8 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0006,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://futures.mexc.com/exchange/{s.replace('/', '_').replace(':USDT', '')}",
-        "blacklist": []
+        "blacklist": [],
+        "emoji": "🏛"
     },
     "okx": {
         "api": ccxt.okx({"enableRateLimit": True}),
@@ -162,7 +181,8 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0005,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.okx.com/trade-swap/{s.replace('/', '-').replace(':USDT', '').lower()}",
-        "blacklist": []
+        "blacklist": [],
+        "emoji": "🏛"
     },
     "gate": {
         "api": ccxt.gateio({"enableRateLimit": True}),
@@ -171,7 +191,8 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0006,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.gate.io/futures_trade/{s.replace('/', '_').replace(':USDT', '')}",
-        "blacklist": []
+        "blacklist": [],
+        "emoji": "🏛"
     },
     "bitget": {
         "api": ccxt.bitget({"enableRateLimit": True}),
@@ -180,7 +201,8 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0006,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.bitget.com/ru/futures/{s.replace('/', '').replace(':USDT', '')}",
-        "blacklist": []
+        "blacklist": [],
+        "emoji": "🏛"
     },
     "kucoin": {
         "api": ccxt.kucoin({"enableRateLimit": True}),
@@ -189,7 +211,8 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0006,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.kucoin.com/futures/trade/{s.replace('/', '-').replace(':USDT', '')}",
-        "blacklist": []
+        "blacklist": [],
+        "emoji": "🏛"
     },
     "htx": {
         "api": ccxt.htx({
@@ -204,7 +227,8 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0006,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.htx.com/futures/exchange/{s.split(':')[0].replace('/', '_').lower()}",
-        "blacklist": []
+        "blacklist": [],
+        "emoji": "🏛"
     },
     "bingx": {
         "api": ccxt.bingx({"enableRateLimit": True}),
@@ -213,7 +237,8 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0005,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://bingx.com/en-us/futures/{s.replace('/', '')}",
-        "blacklist": []
+        "blacklist": [],
+        "emoji": "🏛"
     },
     "phemex": {
         "api": ccxt.phemex({
@@ -227,30 +252,36 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0006,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://phemex.com/futures/trade/{s.replace('/', '').replace(':USDT', '')}",
-        "blacklist": []
+        "blacklist": [],
+        "emoji": "🏛"
     }
 }
 
 # Глобальные переменные
 SHARED_BOT = None
+SPOT_EXCHANGES_LOADED = {}
+FUTURES_EXCHANGES_LOADED = {}
 
 
-async def send_telegram_message(message: str):
+async def send_telegram_message(message: str, chat_id: str = None, reply_markup: InlineKeyboardMarkup = None):
     global SHARED_BOT
     if not SHARED_BOT:
         SHARED_BOT = Bot(token=TELEGRAM_TOKEN)
 
-    for chat_id in TELEGRAM_CHAT_IDS:
+    targets = [chat_id] if chat_id else TELEGRAM_CHAT_IDS
+
+    for target_id in targets:
         try:
             await SHARED_BOT.send_message(
-                chat_id=chat_id,
+                chat_id=target_id,
                 text=message,
                 parse_mode="HTML",
-                disable_web_page_preview=True
+                disable_web_page_preview=True,
+                reply_markup=reply_markup
             )
-            logger.info(f"Сообщение отправлено в чат {chat_id}")
+            logger.info(f"Сообщение отправлено в чат {target_id}")
         except TelegramError as e:
-            logger.error(f"Ошибка отправки в {chat_id}: {e}")
+            logger.error(f"Ошибка отправки в {target_id}: {e}")
 
 
 def load_markets_sync(exchange):
@@ -422,6 +453,7 @@ async def check_spot_arbitrage():
     logger.info("Запуск проверки спотового арбитража")
 
     # Инициализация бирж
+    global SPOT_EXCHANGES_LOADED
     exchanges = {}
     for name, config in SPOT_EXCHANGES.items():
         try:
@@ -432,6 +464,8 @@ async def check_spot_arbitrage():
                 logger.info(f"{name.upper()} успешно загружена")
         except Exception as e:
             logger.error(f"Ошибка инициализации {name}: {e}")
+
+    SPOT_EXCHANGES_LOADED = exchanges
 
     if len(exchanges) < SPOT_MIN_EXCHANGES_FOR_PAIR:
         logger.error(
@@ -671,6 +705,7 @@ async def check_futures_arbitrage():
     logger.info("Запуск проверки фьючерсного арбитража")
 
     # Инициализация бирж
+    global FUTURES_EXCHANGES_LOADED
     exchanges = {}
     for name, config in FUTURES_EXCHANGES.items():
         try:
@@ -685,6 +720,8 @@ async def check_futures_arbitrage():
                 logger.info(f"{name.upper()} успешно загружена")
         except Exception as e:
             logger.error(f"Ошибка инициализации {name}: {e}")
+
+    FUTURES_EXCHANGES_LOADED = exchanges
 
     if len(exchanges) < FUTURES_MIN_EXCHANGES_FOR_PAIR:
         logger.error(f"Недостаточно бирж (нужно минимум {FUTURES_MIN_EXCHANGES_FOR_PAIR})")
@@ -849,16 +886,211 @@ async def check_futures_arbitrage():
             await asyncio.sleep(60)
 
 
+def format_price(price: float) -> str:
+    """Форматирует цену для красивого отображения"""
+    if price is None:
+        return "N/A"
+
+    # Для цен > 1000 используем запятые как разделители тысяч
+    if price >= 1000:
+        return f"${price:,.2f}"
+
+    # Для цен > 1 используем 4 знака после запятой
+    if price >= 1:
+        return f"${price:.4f}"
+
+    # Для цен < 1 используем 8 знаков после запятой
+    return f"${price:.8f}"
+
+
+def format_volume(vol: float) -> str:
+    """Форматирует объем для красивого отображения"""
+    if vol is None:
+        return "N/A"
+
+    # Для объемов > 1 миллиона
+    if vol >= 1_000_000:
+        return f"${vol / 1_000_000:,.1f}M"
+
+    # Для объемов > 1000
+    if vol >= 1_000:
+        return f"${vol / 1_000:,.1f}K"
+
+    # Для объемов < 1000
+    return f"${vol:,.0f}"
+
+
+async def get_coin_prices(coin: str, market_type: str):
+    """Получает цены монеты на всех биржах для указанного рынка"""
+    coin = coin.upper()
+    exchanges = SPOT_EXCHANGES_LOADED if market_type == "spot" else FUTURES_EXCHANGES_LOADED
+
+    if not exchanges:
+        return "❌ Биржи еще не загружены. Попробуйте позже."
+
+    results = []
+    found_on = 0
+
+    for name, data in exchanges.items():
+        exchange = data["api"]
+        config = data["config"]
+
+        # Формируем символ в зависимости от типа рынка
+        symbol = config["symbol_format"](coin)
+
+        try:
+            market = exchange.market(symbol)
+            if (market_type == "spot" and config["is_spot"](market)) or \
+                    (market_type == "futures" and config["is_futures"](market)):
+
+                ticker = await fetch_ticker_data(exchange, symbol)
+                if ticker and ticker['price']:
+                    found_on += 1
+                    price = ticker['price']
+                    volume = ticker.get('volume')
+
+                    # Получаем URL для биржи
+                    url = config["url_format"](symbol)
+
+                    # Добавляем данные для сортировки
+                    results.append({
+                        "price": price,
+                        "name": name.upper(),
+                        "volume": volume,
+                        "url": url,
+                        "emoji": config.get("emoji", "🏛")
+                    })
+        except Exception as e:
+            logger.warning(f"Ошибка получения цены {symbol} на {name}: {e}")
+
+    # Сортируем результаты по цене (от низкой к высокой)
+    results.sort(key=lambda x: x["price"])
+
+    utc_plus_3 = timezone(timedelta(hours=3))
+    current_time = datetime.now(utc_plus_3).strftime('%H:%M:%S')
+
+    market_name = "Спот" if market_type == "spot" else "Фьючерсы"
+    market_color = "🚀" if market_type == "spot" else "📊"
+
+    if results:
+        # Формируем заголовок
+        response = f"{market_color} <b>{market_name} рынки для <code>{coin}</code>:</b>\n\n"
+
+        # Добавляем данные по каждой бирже
+        for idx, item in enumerate(results, 1):
+            # Сделаем название биржи кликабельной ссылкой
+            response += (
+                f"{item['emoji']} <a href='{item['url']}'><b>{item['name']}</b></a>\n"
+                f"▫️ Цена: {format_price(item['price'])}\n"
+                f"▫️ Объем: {format_volume(item['volume'])}\n"
+            )
+
+            # Добавляем разделитель, если это не последний элемент
+            if idx < len(results):
+                response += "\n"
+
+        # Добавляем время и количество бирж
+        response += f"\n⏱ {current_time} | Бирж: {found_on}"
+    else:
+        response = f"❌ Монета {coin} не найдена на {market_name} рынке"
+
+    return response
+
+
+async def handle_coin_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка поиска монеты по названию"""
+    user_id = str(update.effective_user.id)
+
+    if user_id not in TELEGRAM_CHAT_IDS:
+        await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
+        return
+
+    coin = update.message.text.strip().upper()
+    if not coin:
+        await update.message.reply_text("ℹ️ Введите название монеты (например BTC)")
+        return
+
+    # Проверяем, что введен допустимый символ (только буквы и цифры)
+    if not re.match(r'^[A-Z0-9]{2,8}$', coin):
+        await update.message.reply_text(
+            "⚠️ Неверный формат названия монеты. Используйте только буквы и цифры (например BTC или ETH)")
+        return
+
+    # Создаем клавиатуру с кнопками выбора
+    keyboard = [
+        [
+            InlineKeyboardButton("🚀 Спот", callback_data=f"spot_{coin}"),
+            InlineKeyboardButton("📊 Фьючерсы", callback_data=f"futures_{coin}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        f"🔍 Выберите тип рынка для <b><code>{coin}</code></b>:",
+        parse_mode="HTML",
+        reply_markup=reply_markup
+    )
+
+
+async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатий на кнопки"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    if user_id not in TELEGRAM_CHAT_IDS:
+        await query.edit_message_text("⛔ У вас нет доступа к этому боту.")
+        return
+
+    data = query.data.split("_")
+    if len(data) < 2:
+        await query.edit_message_text("❌ Ошибка запроса")
+        return
+
+    market_type = data[0]
+    coin = "_".join(data[1:])  # На случай если coin содержит _
+
+    # Показываем "Загрузка..."
+    await query.edit_message_text(
+        text=f"⏳ Загружаем данные для <b><code>{coin}</code></b> на {'споте' if market_type == 'spot' else 'фьючерсах'}...",
+        parse_mode="HTML"
+    )
+
+    # Получаем данные
+    response = await get_coin_prices(coin, market_type)
+
+    # Обновляем сообщение с результатами
+    await query.edit_message_text(
+        text=response,
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+
 async def handle_any_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка всех сообщений и команд от пользователей"""
     user_id = str(update.effective_user.id)
 
-    if user_id in TELEGRAM_CHAT_IDS:
-        response = "🤖 Бот работает в автономном режиме и не принимает команды. Все арбитражные возможности будут отправляться автоматически."
+    # Если сообщение начинается с /, это команда
+    if update.message.text.startswith('/'):
+        if user_id in TELEGRAM_CHAT_IDS:
+            # Для команд /start и /help
+            if update.message.text.lower() in ['/start', '/help']:
+                response = (
+                    "🤖 <b>Crypto Arbitrage Bot</b>\n\n"
+                    "🔍 Для поиска цен на монету просто введите ее название (например <code>BTC</code> или <code>ETH</code>)\n\n"
+                    "📊 Бот автоматически ищет арбитражные возможности на спотовом и фьючерсном рынках и присылает уведомления"
+                )
+                await update.message.reply_text(response, parse_mode="HTML")
+            else:
+                # Для других команд
+                response = "🔍 Для поиска цен на монету введите ее название"
+                await update.message.reply_text(response)
+        else:
+            await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
     else:
-        response = "⛔ У вас нет доступа к этому боту."
-
-    await update.message.reply_text(response)
+        # Обработка текстовых сообщений (поиск монеты)
+        await handle_coin_search(update, context)
 
 
 async def start_bot():
@@ -875,6 +1107,9 @@ async def start_bot():
 
     # 3. Обработчик для обычных текстовых сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_any_message))
+
+    # 4. Обработчик для нажатий на кнопки
+    application.add_handler(CallbackQueryHandler(handle_button_click))
 
     # Инициализация и запуск
     await application.initialize()
