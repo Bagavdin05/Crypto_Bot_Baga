@@ -1,13 +1,13 @@
 import ccxt
 import asyncio
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Bot, Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
-    CallbackQueryHandler
+    ConversationHandler
 )
 from telegram.error import TelegramError
 import logging
@@ -15,32 +15,56 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 import html
 import re
+import json
+import os
 
 # Общая конфигурация
 TELEGRAM_TOKEN = "8357883688:AAG5E-IwqpbTn7hJ_320wpvKQpNfkm_QQeo"
 TELEGRAM_CHAT_IDS = ["1167694150", "7916502470", "5381553894"]  # ID пользователей с доступом
 
-# Конфигурация спотового арбитража
-SPOT_THRESHOLD_PERCENT = 0.5
-SPOT_MAX_THRESHOLD_PERCENT = 40
-SPOT_CHECK_INTERVAL = 30
-SPOT_MIN_EXCHANGES_FOR_PAIR = 2
-SPOT_MIN_VOLUME_USD = 700000
-SPOT_MIN_ENTRY_AMOUNT_USDT = 5
-SPOT_MAX_ENTRY_AMOUNT_USDT = 120
-SPOT_MAX_IMPACT_PERCENT = 0.5
-SPOT_ORDER_BOOK_DEPTH = 10
-SPOT_MIN_NET_PROFIT_USD = 4
+# Конфигурация спотового арбитража (по умолчанию)
+DEFAULT_SPOT_SETTINGS = {
+    "THRESHOLD_PERCENT": 0.5,
+    "MAX_THRESHOLD_PERCENT": 40,
+    "CHECK_INTERVAL": 30,
+    "MIN_EXCHANGES_FOR_PAIR": 2,
+    "MIN_VOLUME_USD": 700000,
+    "MIN_ENTRY_AMOUNT_USDT": 5,
+    "MAX_ENTRY_AMOUNT_USDT": 120,
+    "MAX_IMPACT_PERCENT": 0.5,
+    "ORDER_BOOK_DEPTH": 10,
+    "MIN_NET_PROFIT_USD": 4,
+    "ENABLED": True
+}
 
-# Конфигурация фьючерсного арбитража
-FUTURES_THRESHOLD_PERCENT = 0.5
-FUTURES_MAX_THRESHOLD_PERCENT = 20
-FUTURES_CHECK_INTERVAL = 30
-FUTURES_MIN_VOLUME_USD = 700000
-FUTURES_MIN_EXCHANGES_FOR_PAIR = 2
-FUTURES_MIN_ENTRY_AMOUNT_USDT = 5
-FUTURES_MAX_ENTRY_AMOUNT_USDT = 60
-FUTURES_MIN_NET_PROFIT_USD = 2.5
+# Конфигурация фьючерсного арбитража (по умолчанию)
+DEFAULT_FUTURES_SETTINGS = {
+    "THRESHOLD_PERCENT": 0.5,
+    "MAX_THRESHOLD_PERCENT": 20,
+    "CHECK_INTERVAL": 30,
+    "MIN_VOLUME_USD": 700000,
+    "MIN_EXCHANGES_FOR_PAIR": 2,
+    "MIN_ENTRY_AMOUNT_USDT": 5,
+    "MAX_ENTRY_AMOUNT_USDT": 60,
+    "MIN_NET_PROFIT_USD": 2.5,
+    "ENABLED": True
+}
+
+# Настройки бирж
+EXCHANGE_SETTINGS = {
+    "bybit": {"ENABLED": True},
+    "mexc": {"ENABLED": True},
+    "okx": {"ENABLED": True},
+    "gate": {"ENABLED": True},
+    "bitget": {"ENABLED": True},
+    "kucoin": {"ENABLED": True},
+    "htx": {"ENABLED": True},
+    "bingx": {"ENABLED": True},
+    "phemex": {"ENABLED": True}
+}
+
+# Состояния для ConversationHandler
+SETTINGS_MENU, SPOT_SETTINGS, FUTURES_SETTINGS, EXCHANGE_SETTINGS_MENU, SETTING_VALUE, COIN_SELECTION = range(6)
 
 # Настройка логгирования
 logging.basicConfig(
@@ -48,6 +72,39 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger("CryptoArbBot")
+
+
+# Загрузка сохраненных настроек
+def load_settings():
+    try:
+        if os.path.exists('settings.json'):
+            with open('settings.json', 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Ошибка загрузки настроек: {e}")
+
+    # Возвращаем настройки по умолчанию
+    return {
+        "SPOT": DEFAULT_SPOT_SETTINGS.copy(),
+        "FUTURES": DEFAULT_FUTURES_SETTINGS.copy(),
+        "EXCHANGES": EXCHANGE_SETTINGS.copy()
+    }
+
+
+# Сохранение настроек
+def save_settings(settings):
+    try:
+        with open('settings.json', 'w') as f:
+            json.dump(settings, f, indent=4)
+    except Exception as e:
+        logger.error(f"Ошибка сохранения настроек: {e}")
+
+
+# Глобальные переменные
+SHARED_BOT = None
+SPOT_EXCHANGES_LOADED = {}
+FUTURES_EXCHANGES_LOADED = {}
+SETTINGS = load_settings()
 
 # Конфигурация бирж для спота
 SPOT_EXCHANGES = {
@@ -257,13 +314,71 @@ FUTURES_EXCHANGES = {
     }
 }
 
-# Глобальные переменные
-SHARED_BOT = None
-SPOT_EXCHANGES_LOADED = {}
-FUTURES_EXCHANGES_LOADED = {}
+
+# Reply-клавиатуры
+def get_main_keyboard():
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("🔧 Настройки")],
+        [KeyboardButton("📊 Статус бота"), KeyboardButton("ℹ️ Помощь")]
+    ], resize_keyboard=True)
 
 
-async def send_telegram_message(message: str, chat_id: str = None, reply_markup: InlineKeyboardMarkup = None):
+def get_settings_keyboard():
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("🚀️ Спот"), KeyboardButton("📊 Фьючерсы")],
+        [KeyboardButton("🏛 Биржи"), KeyboardButton("🔄 Сброс")],
+        [KeyboardButton("🔙 Главное меню")]
+    ], resize_keyboard=True)
+
+
+def get_spot_settings_keyboard():
+    spot = SETTINGS['SPOT']
+    return ReplyKeyboardMarkup([
+        [KeyboardButton(f"Порог: {spot['THRESHOLD_PERCENT']}%"),
+         KeyboardButton(f"Макс. порог: {spot['MAX_THRESHOLD_PERCENT']}%")],
+        [KeyboardButton(f"Интервал: {spot['CHECK_INTERVAL']}с"),
+         KeyboardButton(f"Объем: ${spot['MIN_VOLUME_USD'] / 1000:.0f}K")],
+        [KeyboardButton(f"Мин. сумма: ${spot['MIN_ENTRY_AMOUNT_USDT']}"),
+         KeyboardButton(f"Макс. сумма: ${spot['MAX_ENTRY_AMOUNT_USDT']}")],
+        [KeyboardButton(f"Влияние: {spot['MAX_IMPACT_PERCENT']}%"),
+         KeyboardButton(f"Стакан: {spot['ORDER_BOOK_DEPTH']}")],
+        [KeyboardButton(f"Прибыль: ${spot['MIN_NET_PROFIT_USD']}"),
+         KeyboardButton(f"Статус: {'ВКЛ' if spot['ENABLED'] else 'ВЫКЛ'}")],
+        [KeyboardButton("🔙 Назад в настройки")]
+    ], resize_keyboard=True)
+
+
+def get_futures_settings_keyboard():
+    futures = SETTINGS['FUTURES']
+    return ReplyKeyboardMarkup([
+        [KeyboardButton(f"Порог: {futures['THRESHOLD_PERCENT']}%"),
+         KeyboardButton(f"Макс. порог: {futures['MAX_THRESHOLD_PERCENT']}%")],
+        [KeyboardButton(f"Интервал: {futures['CHECK_INTERVAL']}с"),
+         KeyboardButton(f"Объем: ${futures['MIN_VOLUME_USD'] / 1000:.0f}K")],
+        [KeyboardButton(f"Мин. сумма: ${futures['MIN_ENTRY_AMOUNT_USDT']}"),
+         KeyboardButton(f"Макс. сумма: ${futures['MAX_ENTRY_AMOUNT_USDT']}")],
+        [KeyboardButton(f"Прибыль: ${futures['MIN_NET_PROFIT_USD']}"),
+         KeyboardButton(f"Статус: {'ВКЛ' if futures['ENABLED'] else 'ВЫКЛ'}")],
+        [KeyboardButton("🔙 Назад в настройки")]
+    ], resize_keyboard=True)
+
+
+def get_exchange_settings_keyboard():
+    keyboard = []
+    row = []
+    for i, (exchange, config) in enumerate(SETTINGS['EXCHANGES'].items()):
+        status = "✅" if config['ENABLED'] else "❌"
+        row.append(KeyboardButton(f"{exchange}: {status}"))
+        if (i + 1) % 2 == 0:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([KeyboardButton("🔙 Назад в настройки")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+async def send_telegram_message(message: str, chat_id: str = None, reply_markup: ReplyKeyboardMarkup = None):
     global SHARED_BOT
     if not SHARED_BOT:
         SHARED_BOT = Bot(token=TELEGRAM_TOKEN)
@@ -322,7 +437,7 @@ async def fetch_ticker_data(exchange, symbol: str):
         return None
 
 
-async def fetch_order_book(exchange, symbol: str, depth: int = SPOT_ORDER_BOOK_DEPTH):
+async def fetch_order_book(exchange, symbol: str, depth: int = SETTINGS['SPOT']['ORDER_BOOK_DEPTH']):
     try:
         order_book = await asyncio.get_event_loop().run_in_executor(
             None, exchange.fetch_order_book, symbol, depth)
@@ -452,10 +567,17 @@ def calculate_profit(buy_price: float, sell_price: float, amount: float, buy_fee
 async def check_spot_arbitrage():
     logger.info("Запуск проверки спотового арбитража")
 
+    if not SETTINGS['SPOT']['ENABLED']:
+        logger.info("Спотовый арбитраж отключен в настройках")
+        return
+
     # Инициализация бирж
     global SPOT_EXCHANGES_LOADED
     exchanges = {}
     for name, config in SPOT_EXCHANGES.items():
+        if not SETTINGS['EXCHANGES'][name]['ENABLED']:
+            continue
+
         try:
             exchange = await asyncio.get_event_loop().run_in_executor(
                 None, load_markets_sync, config["api"])
@@ -467,9 +589,9 @@ async def check_spot_arbitrage():
 
     SPOT_EXCHANGES_LOADED = exchanges
 
-    if len(exchanges) < SPOT_MIN_EXCHANGES_FOR_PAIR:
+    if len(exchanges) < SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']:
         logger.error(
-            f"Недостаточно бирж (нужно минимум {SPOT_MIN_EXCHANGES_FOR_PAIR})")
+            f"Недостаточно бирж (нужно минимум {SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']})")
         return
 
     # Сбор всех торговых пар
@@ -489,7 +611,7 @@ async def check_spot_arbitrage():
     valid_pairs = {
         base: list(pairs)
         for base, pairs in all_pairs.items()
-        if len(pairs) >= SPOT_MIN_EXCHANGES_FOR_PAIR
+        if len(pairs) >= SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']
     }
 
     if not valid_pairs:
@@ -498,7 +620,7 @@ async def check_spot_arbitrage():
 
     logger.info(f"Найдено {len(valid_pairs)} пар для анализа")
 
-    while True:
+    while SETTINGS['SPOT']['ENABLED']:
         try:
             found_opportunities = 0
             for base, exchange_symbols in valid_pairs.items():
@@ -515,7 +637,7 @@ async def check_spot_arbitrage():
                                 if data['volume'] is None:
                                     logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
                                     ticker_data[name] = data
-                                elif data['volume'] >= SPOT_MIN_VOLUME_USD:
+                                elif data['volume'] >= SETTINGS['SPOT']['MIN_VOLUME_USD']:
                                     ticker_data[name] = data
                                 else:
                                     logger.debug(
@@ -529,7 +651,7 @@ async def check_spot_arbitrage():
                                 f"Ошибка получения данных {base} на {name}: {e}"
                             )
 
-                    if len(ticker_data) < SPOT_MIN_EXCHANGES_FOR_PAIR:
+                    if len(ticker_data) < SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']:
                         continue
 
                     # Сортируем биржи по цене
@@ -546,7 +668,7 @@ async def check_spot_arbitrage():
                         f"Пара {base}: спред {spread:.2f}% (min: {min_ex[0]} {min_ex[1]['price']}, max: {max_ex[0]} {max_ex[1]['price']})"
                     )
 
-                    if SPOT_THRESHOLD_PERCENT <= spread <= SPOT_MAX_THRESHOLD_PERCENT:
+                    if SETTINGS['SPOT']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['SPOT']['MAX_THRESHOLD_PERCENT']:
                         # Проверяем доступность депозита и вывода
                         deposit_available = await check_deposit_withdrawal_status(
                             exchanges[max_ex[0]]["api"], base, 'deposit')
@@ -580,9 +702,9 @@ async def check_spot_arbitrage():
 
                         # Рассчитываем доступный объем
                         buy_volume = calculate_available_volume(
-                            buy_order_book, 'buy', SPOT_MAX_IMPACT_PERCENT)
+                            buy_order_book, 'buy', SETTINGS['SPOT']['MAX_IMPACT_PERCENT'])
                         sell_volume = calculate_available_volume(
-                            sell_order_book, 'sell', SPOT_MAX_IMPACT_PERCENT)
+                            sell_order_book, 'sell', SETTINGS['SPOT']['MAX_IMPACT_PERCENT'])
                         available_volume = min(buy_volume, sell_volume)
 
                         logger.debug(
@@ -599,7 +721,7 @@ async def check_spot_arbitrage():
                         min_amount_for_profit = calculate_min_entry_amount(
                             buy_price=min_ex[1]['price'],
                             sell_price=max_ex[1]['price'],
-                            min_profit=SPOT_MIN_NET_PROFIT_USD,
+                            min_profit=SETTINGS['SPOT']['MIN_NET_PROFIT_USD'],
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee)
 
@@ -611,12 +733,12 @@ async def check_spot_arbitrage():
                         # Рассчитываем максимально возможную сумму входа
                         max_possible_amount = min(
                             available_volume,
-                            SPOT_MAX_ENTRY_AMOUNT_USDT / min_ex[1]['price'])
+                            SETTINGS['SPOT']['MAX_ENTRY_AMOUNT_USDT'] / min_ex[1]['price'])
 
                         max_entry_amount = max_possible_amount * min_ex[1][
                             'price']
                         min_entry_amount = max(min_amount_for_profit,
-                                               SPOT_MIN_ENTRY_AMOUNT_USDT)
+                                               SETTINGS['SPOT']['MIN_ENTRY_AMOUNT_USDT'])
 
                         if min_entry_amount > max_entry_amount:
                             logger.debug(
@@ -694,7 +816,7 @@ async def check_spot_arbitrage():
 
             logger.info(
                 f"Цикл спотового арбитража завершен. Найдено возможностей: {found_opportunities}")
-            await asyncio.sleep(SPOT_CHECK_INTERVAL)
+            await asyncio.sleep(SETTINGS['SPOT']['CHECK_INTERVAL'])
 
         except Exception as e:
             logger.error(f"Ошибка в основном цикле спотового арбитража: {e}")
@@ -704,10 +826,17 @@ async def check_spot_arbitrage():
 async def check_futures_arbitrage():
     logger.info("Запуск проверки фьючерсного арбитража")
 
+    if not SETTINGS['FUTURES']['ENABLED']:
+        logger.info("Фьючерсный арбитраж отключен в настройках")
+        return
+
     # Инициализация бирж
     global FUTURES_EXCHANGES_LOADED
     exchanges = {}
     for name, config in FUTURES_EXCHANGES.items():
+        if not SETTINGS['EXCHANGES'][name]['ENABLED']:
+            continue
+
         try:
             exchange = await asyncio.get_event_loop().run_in_executor(
                 None, load_markets_sync, config["api"]
@@ -723,8 +852,8 @@ async def check_futures_arbitrage():
 
     FUTURES_EXCHANGES_LOADED = exchanges
 
-    if len(exchanges) < FUTURES_MIN_EXCHANGES_FOR_PAIR:
-        logger.error(f"Недостаточно бирж (нужно минимум {FUTURES_MIN_EXCHANGES_FOR_PAIR})")
+    if len(exchanges) < SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']:
+        logger.error(f"Недостаточно бирж (нужно минимум {SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']})")
         return
 
     # Сбор всех торговых пар USDT
@@ -743,7 +872,7 @@ async def check_futures_arbitrage():
 
     valid_pairs = {
         base: list(pairs) for base, pairs in all_pairs.items()
-        if len(pairs) >= FUTURES_MIN_EXCHANGES_FOR_PAIR
+        if len(pairs) >= SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']
     }
 
     if not valid_pairs:
@@ -752,7 +881,7 @@ async def check_futures_arbitrage():
 
     logger.info(f"Найдено {len(valid_pairs)} фьючерсных USDT пар для анализа")
 
-    while True:
+    while SETTINGS['FUTURES']['ENABLED']:
         try:
             found_opportunities = 0
             for base, exchange_symbols in valid_pairs.items():
@@ -768,7 +897,7 @@ async def check_futures_arbitrage():
                                 if data['volume'] is None:
                                     logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
                                     ticker_data[name] = data
-                                elif data['volume'] >= FUTURES_MIN_VOLUME_USD:
+                                elif data['volume'] >= SETTINGS['FUTURES']['MIN_VOLUME_USD']:
                                     ticker_data[name] = data
                                 else:
                                     logger.debug(f"Объем {symbol} на {name} слишком мал: {data['volume']}")
@@ -777,7 +906,7 @@ async def check_futures_arbitrage():
                         except Exception as e:
                             logger.warning(f"Ошибка получения данных {base} на {name}: {e}")
 
-                    if len(ticker_data) < FUTURES_MIN_EXCHANGES_FOR_PAIR:
+                    if len(ticker_data) < SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']:
                         continue
 
                     # Сортируем биржи по цене
@@ -791,7 +920,8 @@ async def check_futures_arbitrage():
                     logger.debug(
                         f"Пара {base}: спред {spread:.2f}% (min: {min_ex[0]} {min_ex[1]['price']}, max: {max_ex[0]} {max_ex[1]['price']})")
 
-                    if FUTURES_THRESHOLD_PERCENT <= spread <= FUTURES_MAX_THRESHOLD_PERCENT:
+                    if SETTINGS['FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['FUTURES'][
+                        'MAX_THRESHOLD_PERCENT']:
                         # Получаем комиссии
                         buy_fee = exchanges[min_ex[0]]["config"]["taker_fee"]
                         sell_fee = exchanges[max_ex[0]]["config"]["taker_fee"]
@@ -800,7 +930,7 @@ async def check_futures_arbitrage():
                         min_amount_for_profit = calculate_min_entry_amount(
                             buy_price=min_ex[1]['price'],
                             sell_price=max_ex[1]['price'],
-                            min_profit=FUTURES_MIN_NET_PROFIT_USD,
+                            min_profit=SETTINGS['FUTURES']['MIN_NET_PROFIT_USD'],
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee
                         )
@@ -810,8 +940,8 @@ async def check_futures_arbitrage():
                             continue
 
                         # Рассчитываем максимально возможную сумму входа
-                        max_entry_amount = FUTURES_MAX_ENTRY_AMOUNT_USDT
-                        min_entry_amount = max(min_amount_for_profit, FUTURES_MIN_ENTRY_AMOUNT_USDT)
+                        max_entry_amount = SETTINGS['FUTURES']['MAX_ENTRY_AMOUNT_USDT']
+                        min_entry_amount = max(min_amount_for_profit, SETTINGS['FUTURES']['MIN_ENTRY_AMOUNT_USDT'])
 
                         if min_entry_amount > max_entry_amount:
                             logger.debug(f"Пропускаем {base}: min_entry_amount > max_entry_amount")
@@ -879,7 +1009,7 @@ async def check_futures_arbitrage():
                     logger.error(f"Ошибка обработки пары {base}: {e}")
 
             logger.info(f"Цикл фьючерсного арбитража завершен. Найдено возможностей: {found_opportunities}")
-            await asyncio.sleep(FUTURES_CHECK_INTERVAL)
+            await asyncio.sleep(SETTINGS['FUTURES']['CHECK_INTERVAL'])
 
         except Exception as e:
             logger.error(f"Ошибка в основном цикле фьючерсного арбитража: {e}")
@@ -997,119 +1127,483 @@ async def get_coin_prices(coin: str, market_type: str):
     return response
 
 
-async def handle_coin_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка поиска монеты по названию"""
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
     user_id = str(update.effective_user.id)
-
     if user_id not in TELEGRAM_CHAT_IDS:
         await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
         return
 
-    coin = update.message.text.strip().upper()
-    if not coin:
-        await update.message.reply_text("ℹ️ Введите название монеты (например BTC)")
-        return
-
-    # Проверяем, что введен допустимый символ (только буквы и цифры)
-    if not re.match(r'^[A-Z0-9]{2,8}$', coin):
-        await update.message.reply_text(
-            "⚠️ Неверный формат названия монеты. Используйте только буквы и цифры (например BTC или ETH)")
-        return
-
-    # Создаем клавиатуру с кнопками выбора
-    keyboard = [
-        [
-            InlineKeyboardButton("🚀 Спот", callback_data=f"spot_{coin}"),
-            InlineKeyboardButton("📊 Фьючерсы", callback_data=f"futures_{coin}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     await update.message.reply_text(
-        f"🔍 Выберите тип рынка для <b><code>{coin}</code></b>:",
+        "🤖 <b>Crypto Arbitrage Bot</b>\n\n"
+        "Используйте кнопки ниже для взаимодействия с ботом:",
         parse_mode="HTML",
-        reply_markup=reply_markup
+        reply_markup=get_main_keyboard()
     )
 
 
-async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка нажатий на кнопки"""
-    query = update.callback_query
-    await query.answer()
-
-    user_id = str(query.from_user.id)
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка текстовых сообщений"""
+    user_id = str(update.effective_user.id)
     if user_id not in TELEGRAM_CHAT_IDS:
-        await query.edit_message_text("⛔ У вас нет доступа к этому боту.")
+        await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
         return
 
-    data = query.data.split("_")
-    if len(data) < 2:
-        await query.edit_message_text("❌ Ошибка запроса")
+    text = update.message.text
+
+    if text == "🔧 Настройки":
+        await update.message.reply_text(
+            "⚙️ <b>Настройки бота</b>\n\nВыберите категорию:",
+            parse_mode="HTML",
+            reply_markup=get_settings_keyboard()
+        )
+        return SETTINGS_MENU
+
+    elif text == "📊 Статус бота":
+        spot_status = "✅ ВКЛ" if SETTINGS['SPOT']['ENABLED'] else "❌ ВЫКЛ"
+        futures_status = "✅ ВКЛ" if SETTINGS['FUTURES']['ENABLED'] else "❌ ВЫКЛ"
+
+        enabled_exchanges = [name for name, config in SETTINGS['EXCHANGES'].items() if config['ENABLED']]
+        exchanges_status = ", ".join(enabled_exchanges) if enabled_exchanges else "Нет активных бирж"
+
+        await update.message.reply_text(
+            f"🤖 <b>Статус бота</b>\n\n"
+            f"🚀 Спотовый арбитраж: {spot_status}\n"
+            f"📊 Фьючерсный арбитраж: {futures_status}\n"
+            f"🏛 Активные биржи: {exchanges_status}",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
         return
 
-    market_type = data[0]
-    coin = "_".join(data[1:])  # На случай если coin содержит _
+    elif text == "ℹ️ Помощь":
+        await update.message.reply_text(
+            "🤖 <b>Crypto Arbitrage Bot</b>\n\n"
+            "🔍 <b>Поиск монеты</b> - показывает цены на разных биржах, просто введите название монеты (BTC, ETH...)\n"
+            "🔧 <b>Настройки</b> - позволяет настроить параметры арбитража\n"
+            "📊 <b>Статус бота</b> - показывает текущее состояние бота\n\n"
+            "Бот автоматически ищет арбитражные возможности и присылает уведомления.",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    # Если это не команда, предполагаем, что это название монеты
+    if not text.startswith('/'):
+        # Проверяем, что введен допустимый символ (только буквы и цифры)
+        if re.match(r'^[A-Z0-9]{2,8}$', text.upper()):
+            # Сохраняем монету в контексте и предлагаем выбрать тип рынка
+            context.user_data['coin'] = text.upper()
+            await update.message.reply_text(
+                f"🔍 Выберите тип рынка для <b><code>{text.upper()}</code></b>:",
+                parse_mode="HTML",
+                reply_markup=ReplyKeyboardMarkup([
+                    [KeyboardButton(f"🚀 {text.upper()} Спот"), KeyboardButton(f"📊 {text.upper()} Фьючерсы")],
+                    [KeyboardButton("🔙 Главное меню")]
+                ], resize_keyboard=True)
+            )
+            return COIN_SELECTION
+        else:
+            await update.message.reply_text(
+                "⚠️ Неверный формат названия монеты. Используйте только буквы и цифры (например BTC или ETH)",
+                reply_markup=get_main_keyboard()
+            )
+            return
+
+    await update.message.reply_text(
+        "Неизвестная команда. Используйте кнопки меню.",
+        reply_markup=get_main_keyboard()
+    )
+
+
+async def handle_coin_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка выбора типа рынка для монеты"""
+    text = update.message.text
+    coin = context.user_data.get('coin')
+
+    if text == "🔙 Главное меню":
+        await update.message.reply_text(
+            "Главное меню:",
+            reply_markup=get_main_keyboard()
+        )
+        return ConversationHandler.END
+
+    if not coin:
+        await update.message.reply_text(
+            "Не удалось определить монету. Попробуйте снова.",
+            reply_markup=get_main_keyboard()
+        )
+        return ConversationHandler.END
+
+    if "Спот" in text:
+        market_type = "spot"
+    elif "Фьючерсы" in text:
+        market_type = "futures"
+    else:
+        await update.message.reply_text(
+            "Пожалуйста, выберите тип рынка с помощью кнопок.",
+            reply_markup=ReplyKeyboardMarkup([
+                [KeyboardButton(f"🚀 {coin} Спот"), KeyboardButton(f"📊 {coin} Фьючерсы")],
+                [KeyboardButton("🔙 Главное меню")]
+            ], resize_keyboard=True)
+        )
+        return COIN_SELECTION
 
     # Показываем "Загрузка..."
-    await query.edit_message_text(
-        text=f"⏳ Загружаем данные для <b><code>{coin}</code></b> на {'споте' if market_type == 'spot' else 'фьючерсах'}...",
+    await update.message.reply_text(
+        f"⏳ Загружаем данные для <b><code>{coin}</code></b> на {'споте' if market_type == 'spot' else 'фьючерсах'}...",
         parse_mode="HTML"
     )
 
     # Получаем данные
     response = await get_coin_prices(coin, market_type)
 
-    # Обновляем сообщение с результатами
-    await query.edit_message_text(
+    # Отправляем результаты
+    await update.message.reply_text(
         text=response,
         parse_mode="HTML",
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
+        reply_markup=get_main_keyboard()
     )
+    return ConversationHandler.END
 
 
-async def handle_any_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка всех сообщений и команд от пользователей"""
-    user_id = str(update.effective_user.id)
+async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка меню настроек"""
+    text = update.message.text
 
-    # Если сообщение начинается с /, это команда
-    if update.message.text.startswith('/'):
-        if user_id in TELEGRAM_CHAT_IDS:
-            # Для команд /start и /help
-            if update.message.text.lower() in ['/start', '/help']:
-                response = (
-                    "🤖 <b>Crypto Arbitrage Bot</b>\n\n"
-                    "🔍 Для поиска цен на монету просто введите ее название (например <code>BTC</code> или <code>ETH</code>)\n\n"
-                    "📊 Бот автоматически ищет арбитражные возможности на спотовом и фьючерсном рынках и присылает уведомления"
-                )
-                await update.message.reply_text(response, parse_mode="HTML")
-            else:
-                # Для других команд
-                response = "🔍 Для поиска цен на монету введите ее название"
-                await update.message.reply_text(response)
+    if text == "🚀️ Спот":
+        await update.message.reply_text(
+            "🚀️ <b>Настройки спотового арбитража</b>\n\nВыберите параметр для изменения:",
+            parse_mode="HTML",
+            reply_markup=get_spot_settings_keyboard()
+        )
+        return SPOT_SETTINGS
+
+    elif text == "📊 Фьючерсы":
+        await update.message.reply_text(
+            "📊 <b>Настройки фьючерсного арбитража</b>\n\nВыберите параметр для изменения:",
+            parse_mode="HTML",
+            reply_markup=get_futures_settings_keyboard()
+        )
+        return FUTURES_SETTINGS
+
+    elif text == "🏛 Биржи":
+        await update.message.reply_text(
+            "🏛 <b>Настройки бирж</b>\n\nВыберите биржу для включения/выключения:",
+            parse_mode="HTML",
+            reply_markup=get_exchange_settings_keyboard()
+        )
+        return EXCHANGE_SETTINGS_MENU
+
+    elif text == "🔄 Сброс":
+        global SETTINGS
+        SETTINGS = {
+            "SPOT": DEFAULT_SPOT_SETTINGS.copy(),
+            "FUTURES": DEFAULT_FUTURES_SETTINGS.copy(),
+            "EXCHANGES": EXCHANGE_SETTINGS.copy()
+        }
+        save_settings(SETTINGS)
+        await update.message.reply_text(
+            "✅ Настройки сброшены к значениям по умолчанию",
+            reply_markup=get_settings_keyboard()
+        )
+        return SETTINGS_MENU
+
+    elif text == "🔙 Главное меню":
+        await update.message.reply_text(
+            "Главное меню:",
+            reply_markup=get_main_keyboard()
+        )
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        "Неизвестная команда. Используйте кнопки меню.",
+        reply_markup=get_settings_keyboard()
+    )
+    return SETTINGS_MENU
+
+
+async def handle_spot_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка настроек спота"""
+    text = update.message.text
+
+    if text == "🔙 Назад в настройки":
+        await update.message.reply_text(
+            "⚙️ <b>Настройки бота</b>\n\nВыберите категорию:",
+            parse_mode="HTML",
+            reply_markup=get_settings_keyboard()
+        )
+        return SETTINGS_MENU
+
+    # Обработка изменения параметров
+    if text.startswith("Порог:"):
+        context.user_data['setting'] = ('SPOT', 'THRESHOLD_PERCENT')
+        await update.message.reply_text(
+            f"Введите новое значение для порога арбитража (текущее: {SETTINGS['SPOT']['THRESHOLD_PERCENT']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. порог:"):
+        context.user_data['setting'] = ('SPOT', 'MAX_THRESHOLD_PERCENT')
+        await update.message.reply_text(
+            f"Введите новое значение для максимального порога (текущее: {SETTINGS['SPOT']['MAX_THRESHOLD_PERCENT']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Интервал:"):
+        context.user_data['setting'] = ('SPOT', 'CHECK_INTERVAL')
+        await update.message.reply_text(
+            f"Введите новое значение для интервала проверки (текущее: {SETTINGS['SPOT']['CHECK_INTERVAL']} сек):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Объем:"):
+        context.user_data['setting'] = ('SPOT', 'MIN_VOLUME_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для минимального объема (текущее: ${SETTINGS['SPOT']['MIN_VOLUME_USD']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Мин. сумма:"):
+        context.user_data['setting'] = ('SPOT', 'MIN_ENTRY_AMOUNT_USDT')
+        await update.message.reply_text(
+            f"Введите новое значение для минимальной суммы входа (текущее: ${SETTINGS['SPOT']['MIN_ENTRY_AMOUNT_USDT']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. сумма:"):
+        context.user_data['setting'] = ('SPOT', 'MAX_ENTRY_AMOUNT_USDT')
+        await update.message.reply_text(
+            f"Введите новое значение для максимальной суммы входа (текущее: ${SETTINGS['SPOT']['MAX_ENTRY_AMOUNT_USDT']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Влияние:"):
+        context.user_data['setting'] = ('SPOT', 'MAX_IMPACT_PERCENT')
+        await update.message.reply_text(
+            f"Введите новое значение для максимального влияния (текущее: {SETTINGS['SPOT']['MAX_IMPACT_PERCENT']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Стакан:"):
+        context.user_data['setting'] = ('SPOT', 'ORDER_BOOK_DEPTH')
+        await update.message.reply_text(
+            f"Введите новое значение для глубины стакана (текущее: {SETTINGS['SPOT']['ORDER_BOOK_DEPTH']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Прибыль:"):
+        context.user_data['setting'] = ('SPOT', 'MIN_NET_PROFIT_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для минимальной прибыли (текущее: ${SETTINGS['SPOT']['MIN_NET_PROFIT_USD']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Статус:"):
+        SETTINGS['SPOT']['ENABLED'] = not SETTINGS['SPOT']['ENABLED']
+        save_settings(SETTINGS)
+        status = "ВКЛ" if SETTINGS['SPOT']['ENABLED'] else "ВЫКЛ"
+        await update.message.reply_text(
+            f"✅ Спотовый арбитраж {status}",
+            reply_markup=get_spot_settings_keyboard()
+        )
+        return SPOT_SETTINGS
+
+    await update.message.reply_text(
+        "Неизвестная команда. Используйте кнопки меню.",
+        reply_markup=get_spot_settings_keyboard()
+    )
+    return SPOT_SETTINGS
+
+
+async def handle_futures_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка настроек фьючерсов"""
+    text = update.message.text
+
+    if text == "🔙 Назад в настройки":
+        await update.message.reply_text(
+            "⚙️ <b>Настройки бота</b>\n\nВыберите категорию:",
+            parse_mode="HTML",
+            reply_markup=get_settings_keyboard()
+        )
+        return SETTINGS_MENU
+
+    # Обработка изменения параметров
+    if text.startswith("Порог:"):
+        context.user_data['setting'] = ('FUTURES', 'THRESHOLD_PERCENT')
+        await update.message.reply_text(
+            f"Введите новое значение для порога арбитража (текущее: {SETTINGS['FUTURES']['THRESHOLD_PERCENT']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. порог:"):
+        context.user_data['setting'] = ('FUTURES', 'MAX_THRESHOLD_PERCENT')
+        await update.message.reply_text(
+            f"Введите новое значение для максимального порога (текущее: {SETTINGS['FUTURES']['MAX_THRESHOLD_PERCENT']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Интервал:"):
+        context.user_data['setting'] = ('FUTURES', 'CHECK_INTERVAL')
+        await update.message.reply_text(
+            f"Введите новое значение для интервала проверки (текущее: {SETTINGS['FUTURES']['CHECK_INTERVAL']} сек):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Объем:"):
+        context.user_data['setting'] = ('FUTURES', 'MIN_VOLUME_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для минимального объема (текущее: ${SETTINGS['FUTURES']['MIN_VOLUME_USD']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Мин. сумма:"):
+        context.user_data['setting'] = ('FUTURES', 'MIN_ENTRY_AMOUNT_USDT')
+        await update.message.reply_text(
+            f"Введите новое значение для минимальной суммы входа (текущее: ${SETTINGS['FUTURES']['MIN_ENTRY_AMOUNT_USDT']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. сумма:"):
+        context.user_data['setting'] = ('FUTURES', 'MAX_ENTRY_AMOUNT_USDT')
+        await update.message.reply_text(
+            f"Введите новое значение для максимальной суммы входа (текущее: ${SETTINGS['FUTURES']['MAX_ENTRY_AMOUNT_USDT']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Прибыль:"):
+        context.user_data['setting'] = ('FUTURES', 'MIN_NET_PROFIT_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для минимальной прибыль (текущее: ${SETTINGS['FUTURES']['MIN_NET_PROFIT_USD']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Статус:"):
+        SETTINGS['FUTURES']['ENABLED'] = not SETTINGS['FUTURES']['ENABLED']
+        save_settings(SETTINGS)
+        status = "ВКЛ" if SETTINGS['FUTURES']['ENABLED'] else "ВЫКЛ"
+        await update.message.reply_text(
+            f"✅ Фьючерсный арбитраж {status}",
+            reply_markup=get_futures_settings_keyboard()
+        )
+        return FUTURES_SETTINGS
+
+    await update.message.reply_text(
+        "Неизвестная команда. Используйте кнопки меню.",
+        reply_markup=get_futures_settings_keyboard()
+    )
+    return FUTURES_SETTINGS
+
+
+async def handle_exchange_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка настроек бирж"""
+    text = update.message.text
+
+    if text == "🔙 Назад в настройки":
+        await update.message.reply_text(
+            "⚙️ <b>Настройки бота</b>\n\nВыберите категорию:",
+            parse_mode="HTML",
+            reply_markup=get_settings_keyboard()
+        )
+        return SETTINGS_MENU
+
+    # Обработка включения/выключения бирж
+    for exchange in SETTINGS['EXCHANGES'].keys():
+        if text.startswith(exchange):
+            SETTINGS['EXCHANGES'][exchange]['ENABLED'] = not SETTINGS['EXCHANGES'][exchange]['ENABLED']
+            save_settings(SETTINGS)
+            status = "✅" if SETTINGS['EXCHANGES'][exchange]['ENABLED'] else "❌"
+            await update.message.reply_text(
+                f"{exchange} {'включена' if SETTINGS['EXCHANGES'][exchange]['ENABLED'] else 'выключена'}",
+                reply_markup=get_exchange_settings_keyboard()
+            )
+            return EXCHANGE_SETTINGS_MENU
+
+    await update.message.reply_text(
+        "Неизвестная команда. Используйте кнопки меню.",
+        reply_markup=get_exchange_settings_keyboard()
+    )
+    return EXCHANGE_SETTINGS_MENU
+
+
+async def handle_setting_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ввода значения настройки"""
+    try:
+        new_value = float(update.message.text)
+        category, setting = context.user_data['setting']
+
+        if setting in ['THRESHOLD_PERCENT', 'MAX_THRESHOLD_PERCENT', 'MAX_IMPACT_PERCENT']:
+            # Процентные значения
+            if new_value <= 0 or new_value > 100:
+                await update.message.reply_text("❌ Значение должно быть между 0 и 100. Попробуйте снова:")
+                return SETTING_VALUE
+        elif setting in ['MIN_VOLUME_USD', 'MIN_ENTRY_AMOUNT_USDT', 'MAX_ENTRY_AMOUNT_USDT', 'MIN_NET_PROFIT_USD']:
+            # Денежные значения
+            if new_value <= 0:
+                await update.message.reply_text("❌ Значение должно быть положительным. Попробуйте снова:")
+                return SETTING_VALUE
+        elif setting == 'CHECK_INTERVAL':
+            # Интервал в секундах
+            if new_value < 5 or new_value > 3600:
+                await update.message.reply_text("❌ Интервал должен быть между 5 и 3600 секунд. Попробуйте снова:")
+                return SETTING_VALUE
+        elif setting == 'ORDER_BOOK_DEPTH':
+            # Глубина стакана
+            if new_value < 1 or new_value > 50:
+                await update.message.reply_text("❌ Глубина стакана должна быть между 1 и 50. Попробуйте снова:")
+                return SETTING_VALUE
+
+        SETTINGS[category][setting] = new_value
+        save_settings(SETTINGS)
+
+        if category == 'SPOT':
+            await update.message.reply_text(
+                f"✅ Параметр {setting} изменен на {new_value}",
+                reply_markup=get_spot_settings_keyboard()
+            )
+            return SPOT_SETTINGS
         else:
-            await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
-    else:
-        # Обработка текстовых сообщений (поиск монеты)
-        await handle_coin_search(update, context)
+            await update.message.reply_text(
+                f"✅ Параметр {setting} изменен на {new_value}",
+                reply_markup=get_futures_settings_keyboard()
+            )
+            return FUTURES_SETTINGS
+
+    except ValueError:
+        await update.message.reply_text("❌ Пожалуйста, введите числовое значение:")
+        return SETTING_VALUE
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена текущей операции"""
+    await update.message.reply_text(
+        "Операция отменена.",
+        reply_markup=get_main_keyboard()
+    )
+    return ConversationHandler.END
 
 
 async def start_bot():
     """Запуск Telegram бота с обработчиками команд"""
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Регистрируем обработчики:
-    # 1. Для любых команд (начинающихся с /)
-    application.add_handler(CommandHandler("start", handle_any_message))
-    application.add_handler(CommandHandler("help", handle_any_message))
+    # Добавляем обработчики
+    conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)],
+        states={
+            SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings)],
+            SPOT_SETTINGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_spot_settings)],
+            FUTURES_SETTINGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_futures_settings)],
+            EXCHANGE_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_exchange_settings)],
+            SETTING_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_setting_value)],
+            COIN_SELECTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_coin_selection)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
 
-    # 2. Обработчик для всех остальных команд (которые не указаны явно)
-    application.add_handler(MessageHandler(filters.COMMAND, handle_any_message))
-
-    # 3. Обработчик для обычных текстовых сообщений
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_any_message))
-
-    # 4. Обработчик для нажатий на кнопки
-    application.add_handler(CallbackQueryHandler(handle_button_click))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(conv_handler)
 
     # Инициализация и запуск
     await application.initialize()
