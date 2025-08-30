@@ -1191,7 +1191,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Если это не команда, предполагаем, что это название монеты
     if not text.startswith('/'):
         # Проверяем, что введен допустимый символ (только буквы и цифры)
-        if re.match(r'^[A-Z0-9]{2,8}$', text.upper()):
+        if re.match(r'^[A-Z0-9]{1,15}$', text.upper()):
             # Сохраняем монету в контексте и предлагаем выбрать тип рынка
             context.user_data['coin'] = text.upper()
             await update.message.reply_text(
