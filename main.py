@@ -30,7 +30,7 @@ DEFAULT_SPOT_SETTINGS = {
     "MIN_EXCHANGES_FOR_PAIR": 2,
     "MIN_VOLUME_USD": 1000000,
     "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 120,
+    "MAX_ENTRY_AMOUNT_USDT": 200,
     "MAX_IMPACT_PERCENT": 0.5,
     "ORDER_BOOK_DEPTH": 10,
     "MIN_NET_PROFIT_USD": 4,
@@ -45,7 +45,20 @@ DEFAULT_FUTURES_SETTINGS = {
     "MIN_VOLUME_USD": 1000000,
     "MIN_EXCHANGES_FOR_PAIR": 2,
     "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 60,
+    "MAX_ENTRY_AMOUNT_USDT": 100,
+    "MIN_NET_PROFIT_USD": 2.5,
+    "ENABLED": True
+}
+
+# Конфигурация спот-фьючерсного арбитража (по умолчанию)
+DEFAULT_SPOT_FUTURES_SETTINGS = {
+    "THRESHOLD_PERCENT": 0.5,
+    "MAX_THRESHOLD_PERCENT": 20,
+    "CHECK_INTERVAL": 30,
+    "MIN_VOLUME_USD": 1000000,
+    "MIN_EXCHANGES_FOR_PAIR": 2,
+    "MIN_ENTRY_AMOUNT_USDT": 5,
+    "MAX_ENTRY_AMOUNT_USDT": 100,
     "MIN_NET_PROFIT_USD": 2.5,
     "ENABLED": True
 }
@@ -69,7 +82,8 @@ EXCHANGE_SETTINGS = {
 }
 
 # Состояния для ConversationHandler
-SETTINGS_MENU, SPOT_SETTINGS, FUTURES_SETTINGS, EXCHANGE_SETTINGS_MENU, SETTING_VALUE, COIN_SELECTION = range(6)
+SETTINGS_MENU, SPOT_SETTINGS, FUTURES_SETTINGS, SPOT_FUTURES_SETTINGS, EXCHANGE_SETTINGS_MENU, SETTING_VALUE, COIN_SELECTION = range(
+    7)
 
 # Настройка логгирования
 logging.basicConfig(
@@ -92,6 +106,7 @@ def load_settings():
     return {
         "SPOT": DEFAULT_SPOT_SETTINGS.copy(),
         "FUTURES": DEFAULT_FUTURES_SETTINGS.copy(),
+        "SPOT_FUTURES": DEFAULT_SPOT_FUTURES_SETTINGS.copy(),
         "EXCHANGES": EXCHANGE_SETTINGS.copy()
     }
 
@@ -284,7 +299,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0001,
         "url_format": lambda s: f"https://www.bybit.com/trade/usdt/{s.replace('/', '').replace(':USDT', '')}",
         "blacklist": ["BTC", "ETH"],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "mexc": {
         "api": ccxt.mexc({"enableRateLimit": True}),
@@ -294,7 +309,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://futures.mexc.com/exchange/{s.replace('/', '_').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "okx": {
         "api": ccxt.okx({"enableRateLimit": True}),
@@ -304,7 +319,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.okx.com/trade-swap/{s.replace('/', '-').replace(':USDT', '').lower()}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "gate": {
         "api": ccxt.gateio({"enableRateLimit": True}),
@@ -314,7 +329,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.gate.io/futures_trade/{s.replace('/', '_').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "bitget": {
         "api": ccxt.bitget({"enableRateLimit": True}),
@@ -324,7 +339,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.bitget.com/ru/futures/{s.replace('/', '').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "kucoin": {
         "api": ccxt.kucoin({"enableRateLimit": True}),
@@ -334,7 +349,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.kucoin.com/futures/trade/{s.replace('/', '-').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "htx": {
         "api": ccxt.htx({
@@ -350,7 +365,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.htx.com/futures/exchange/{s.split(':')[0].replace('/', '_').lower()}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "bingx": {
         "api": ccxt.bingx({"enableRateLimit": True}),
@@ -360,7 +375,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://bingx.com/en-us/futures/{s.replace('/', '')}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "phemex": {
         "api": ccxt.phemex({
@@ -375,7 +390,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://phemex.com/futures/trade/{s.replace('/', '').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "coinex": {
         "api": ccxt.coinex({"enableRateLimit": True}),
@@ -385,7 +400,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.001,
         "url_format": lambda s: f"https://www.coinex.com/perpetual/{s.replace('/', '-').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "xt": {
         "api": ccxt.xt({"enableRateLimit": True}),
@@ -395,7 +410,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.002,
         "url_format": lambda s: f"https://www.xt.com/futures/{s.replace('/', '_').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "ascendex": {
         "api": ccxt.ascendex({"enableRateLimit": True}),
@@ -405,7 +420,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.001,
         "url_format": lambda s: f"https://ascendex.com/en/futures/{s.replace('/', '-').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "bitrue": {
         "api": ccxt.bitrue({"enableRateLimit": True}),
@@ -415,7 +430,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.001,
         "url_format": lambda s: f"https://www.bitrue.com/futures/{s.replace('/', '_').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     },
     "blofin": {
         "api": ccxt.blofin({
@@ -430,7 +445,7 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.blofin.com/futures/{s.replace('/', '-').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "🏛"
+        "emoji": "📊"
     }
 }
 
@@ -445,7 +460,7 @@ def get_main_keyboard():
 
 def get_settings_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("🚀️ Спот"), KeyboardButton("📊 Фьючерсы")],
+        [KeyboardButton("🚀️ Спот"), KeyboardButton("📊 Фьючерсы"), KeyboardButton("↔️ Спот-Фьючерсы")],
         [KeyboardButton("🏛 Биржи"), KeyboardButton("🔄 Сброс")],
         [KeyboardButton("🔙 Главное меню")]
     ], resize_keyboard=True)
@@ -473,12 +488,27 @@ def get_futures_settings_keyboard():
     return ReplyKeyboardMarkup([
         [KeyboardButton(f"Порог: {futures['THRESHOLD_PERCENT']}%"),
          KeyboardButton(f"Макс. порог: {futures['MAX_THRESHOLD_PERCENT']}%")],
-        [KeyboardButton(f"Интервал: {futures['CHECK_INERAL']}с"),
+        [KeyboardButton(f"Интервал: {futures['CHECK_INTERVAL']}с"),
          KeyboardButton(f"Объем: ${futures['MIN_VOLUME_USD'] / 1000:.0f}K")],
         [KeyboardButton(f"Мин. сумма: ${futures['MIN_ENTRY_AMOUNT_USDT']}"),
          KeyboardButton(f"Макс. сумма: ${futures['MAX_ENTRY_AMOUNT_USDT']}")],
         [KeyboardButton(f"Прибыль: ${futures['MIN_NET_PROFIT_USD']}"),
          KeyboardButton(f"Статус: {'ВКЛ' if futures['ENABLED'] else 'ВЫКЛ'}")],
+        [KeyboardButton("🔙 Назад в настройки")]
+    ], resize_keyboard=True)
+
+
+def get_spot_futures_settings_keyboard():
+    spot_futures = SETTINGS['SPOT_FUTURES']
+    return ReplyKeyboardMarkup([
+        [KeyboardButton(f"Порог: {spot_futures['THRESHOLD_PERCENT']}%"),
+         KeyboardButton(f"Макс. порог: {spot_futures['MAX_THRESHOLD_PERCENT']}%")],
+        [KeyboardButton(f"Интервал: {spot_futures['CHECK_INTERVAL']}с"),
+         KeyboardButton(f"Объем: ${spot_futures['MIN_VOLUME_USD'] / 1000:.0f}K")],
+        [KeyboardButton(f"Мин. сумма: ${spot_futures['MIN_ENTRY_AMOUNT_USDT']}"),
+         KeyboardButton(f"Макс. сумма: ${spot_futures['MAX_ENTRY_AMOUNT_USDT']}")],
+        [KeyboardButton(f"Прибыль: ${spot_futures['MIN_NET_PROFIT_USD']}"),
+         KeyboardButton(f"Статус: {'ВКЛ' if spot_futures['ENABLED'] else 'ВЫКЛ'}")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
@@ -746,7 +776,7 @@ async def check_spot_arbitrage():
     }
 
     if not valid_pairs:
-        logger.error("Нет пар, торгуемых хотя бы на двух биржаш")
+        logger.error("Нет пар, торгуемых хотя бы на двух биржах")
         return
 
     logger.info(f"Найдено {len(valid_pairs)} пар для анализа")
@@ -958,7 +988,7 @@ async def check_futures_arbitrage():
     logger.info("Запуск проверки фьючерсного арбитража")
 
     if not SETTINGS['FUTURES']['ENABLED']:
-        logger.info("Фьючерсный арбитраж отключен в настройки")
+        logger.info("Фьючерсный арбитраж отключен в настройках")
         return
 
     # Инициализация бирж
@@ -1055,7 +1085,8 @@ async def check_futures_arbitrage():
                     logger.debug(
                         f"Пара {base}: спред {spread:.2f}% (min: {min_ex[0]} {min_ex[1]['price']}, max: {max_ex[0]} {max_ex[1]['price']})")
 
-                    if SETTINGS['FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['FUTURES']['MAX_THRESHOLD_PERCENT']:
+                    if SETTINGS['FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['FUTURES'][
+                        'MAX_THRESHOLD_PERCENT']:
                         # Получаем комиссии
                         buy_fee = exchanges[min_ex[0]]["config"]["taker_fee"]
                         sell_fee = exchanges[max_ex[0]]["config"]["taker_fee"]
@@ -1130,7 +1161,7 @@ async def check_futures_arbitrage():
                             f"   <b>Комиссия:</b> {buy_fee * 100:.3f}%\n\n"
                             f"🔴 <b>Шорт на <a href='{sell_url}'>{max_ex[0].upper()}</a>:</b> ${max_ex[1]['price']:.8f}\n"
                             f"   <b>Объём:</b> {max_volume}\n"
-                            f"   <б>Комиссия:</b> {sell_fee * 100:.3f}%\n\n"
+                            f"   <b>Комиссия:</b> {sell_fee * 100:.3f}%\n\n"
                             f"💰 <b>Чистая прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f} ({profit_max['percent']:.2f}%)\n\n"
                             f"⏱ {current_time}\n"
                         )
@@ -1147,6 +1178,246 @@ async def check_futures_arbitrage():
 
         except Exception as e:
             logger.error(f"Ошибка в основном цикле фьючерсного арбитража: {e}")
+            await asyncio.sleep(60)
+
+
+async def check_spot_futures_arbitrage():
+    """Проверка спот-фьючерсного арбитража"""
+    logger.info("Запуск проверки спот-фьючерсного арбитража")
+
+    if not SETTINGS['SPOT_FUTURES']['ENABLED']:
+        logger.info("Спот-фьючерсный арбитраж отключен в настройках")
+        return
+
+    # Инициализация бирж
+    global SPOT_EXCHANGES_LOADED, FUTURES_EXCHANGES_LOADED
+
+    # Загружаем спотовые биржи, если еще не загружены
+    if not SPOT_EXCHANGES_LOADED:
+        spot_exchanges = {}
+        for name, config in SPOT_EXCHANGES.items():
+            if not SETTINGS['EXCHANGES'][name]['ENABLED']:
+                continue
+            try:
+                if name == "blofin":
+                    config["api"].options['defaultType'] = 'spot'
+                exchange = await asyncio.get_event_loop().run_in_executor(
+                    None, load_markets_sync, config["api"])
+                if exchange:
+                    spot_exchanges[name] = {"api": exchange, "config": config}
+            except Exception as e:
+                logger.error(f"Ошибка инициализации спотовой биржи {name}: {e}")
+        SPOT_EXCHANGES_LOADED = spot_exchanges
+
+    # Загружаем фьючерсные биржи, если еще не загружены
+    if not FUTURES_EXCHANGES_LOADED:
+        futures_exchanges = {}
+        for name, config in FUTURES_EXCHANGES.items():
+            if not SETTINGS['EXCHANGES'][name]['ENABLED']:
+                continue
+            try:
+                if name == "blofin":
+                    config["api"].options['defaultType'] = 'swap'
+                exchange = await asyncio.get_event_loop().run_in_executor(
+                    None, load_markets_sync, config["api"])
+                if exchange:
+                    futures_exchanges[name] = {"api": exchange, "config": config}
+            except Exception as e:
+                logger.error(f"Ошибка инициализации фьючерсной биржи {name}: {e}")
+        FUTURES_EXCHANGES_LOADED = futures_exchanges
+
+    if len(SPOT_EXCHANGES_LOADED) < 1 or len(FUTURES_EXCHANGES_LOADED) < 1:
+        logger.error("Недостаточно бирж для спот-фьючерсного арбитража")
+        return
+
+    # Собираем все торговые пары
+    spot_pairs = defaultdict(set)
+    futures_pairs = defaultdict(set)
+
+    # Собираем спотовые пары
+    for name, data in SPOT_EXCHANGES_LOADED.items():
+        exchange = data["api"]
+        config = data["config"]
+        for symbol, market in exchange.markets.items():
+            try:
+                if config["is_spot"](market):
+                    base = market['base']
+                    spot_pairs[base].add((name, symbol))
+            except Exception as e:
+                logger.warning(f"Ошибка обработки спотовой пары {symbol} на {name}: {e}")
+
+    # Собираем фьючерсные пары
+    for name, data in FUTURES_EXCHANGES_LOADED.items():
+        exchange = data["api"]
+        config = data["config"]
+        for symbol, market in exchange.markets.items():
+            try:
+                if config["is_futures"](market):
+                    base = market['base']
+                    if base not in config["blacklist"]:
+                        futures_pairs[base].add((name, symbol))
+            except Exception as e:
+                logger.warning(f"Ошибка обработки фьючерсной пары {symbol} на {name}: {e}")
+
+    # Находим общие пары
+    common_pairs = set(spot_pairs.keys()) & set(futures_pairs.keys())
+
+    if not common_pairs:
+        logger.error("Нет общих пар для спот-фьючерсного арбитража")
+        return
+
+    logger.info(f"Найдено {len(common_pairs)} общих пар для анализа")
+
+    while SETTINGS['SPOT_FUTURES']['ENABLED']:
+        try:
+            found_opportunities = 0
+            for base in common_pairs:
+                try:
+                    spot_ticker_data = {}
+                    futures_ticker_data = {}
+
+                    # Получаем данные тикеров для спотовых бирж
+                    for name, symbol in spot_pairs[base]:
+                        try:
+                            data = await fetch_ticker_data(SPOT_EXCHANGES_LOADED[name]["api"], symbol)
+                            if data and data['price'] is not None:
+                                if data['volume'] is None or data['volume'] >= SETTINGS['SPOT_FUTURES'][
+                                    'MIN_VOLUME_USD']:
+                                    spot_ticker_data[name] = data
+                        except Exception as e:
+                            logger.warning(f"Ошибка получения спотовых данных {base} на {name}: {e}")
+
+                    # Получаем данные тикеров для фьючерсных бирж
+                    for name, symbol in futures_pairs[base]:
+                        try:
+                            data = await fetch_ticker_data(FUTURES_EXCHANGES_LOADED[name]["api"], symbol)
+                            if data and data['price'] is not None:
+                                if data['volume'] is None or data['volume'] >= SETTINGS['SPOT_FUTURES'][
+                                    'MIN_VOLUME_USD']:
+                                    futures_ticker_data[name] = data
+                        except Exception as e:
+                            logger.warning(f"Ошибка получения фьючерсных данных {base} на {name}: {e}")
+
+                    if not spot_ticker_data or not futures_ticker_data:
+                        continue
+
+                    # Находим лучшие цены
+                    min_spot = min(spot_ticker_data.items(), key=lambda x: x[1]['price'])
+                    max_futures = max(futures_ticker_data.items(), key=lambda x: x[1]['price'])
+
+                    # Рассчитываем спред
+                    spread = (max_futures[1]['price'] - min_spot[1]['price']) / min_spot[1]['price'] * 100
+
+                    logger.debug(
+                        f"Пара {base}: спред {spread:.2f}% (spot: {min_spot[0]} {min_spot[1]['price']}, futures: {max_futures[0]} {max_futures[1]['price']})")
+
+                    if SETTINGS['SPOT_FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['SPOT_FUTURES'][
+                        'MAX_THRESHOLD_PERCENT']:
+                        # Проверяем доступность депозита и вывода для спота
+                        deposit_available = await check_deposit_withdrawal_status(
+                            SPOT_EXCHANGES_LOADED[min_spot[0]]["api"], base, 'deposit')
+                        withdrawal_available = await check_deposit_withdrawal_status(
+                            SPOT_EXCHANGES_LOADED[min_spot[0]]["api"], base, 'withdrawal')
+
+                        if not (deposit_available and withdrawal_available):
+                            logger.debug(f"Пропускаем {base}: депозит или вывод недоступен")
+                            continue
+
+                        # Получаем комиссии
+                        spot_fee = SPOT_EXCHANGES[min_spot[0]]["taker_fee"]
+                        futures_fee = FUTURES_EXCHANGES[max_futures[0]]["taker_fee"]
+
+                        # Рассчитываем минимальную сумму для MIN_NET_PROFIT_USD
+                        min_amount_for_profit = calculate_min_entry_amount(
+                            buy_price=min_spot[1]['price'],
+                            sell_price=max_futures[1]['price'],
+                            min_profit=SETTINGS['SPOT_FUTURES']['MIN_NET_PROFIT_USD'],
+                            buy_fee_percent=spot_fee,
+                            sell_fee_percent=futures_fee
+                        )
+
+                        if min_amount_for_profit <= 0:
+                            logger.debug(f"Пропускаем {base}: недостаточная прибыль")
+                            continue
+
+                        # Рассчитываем максимально возможную сумму входа
+                        max_entry_amount = SETTINGS['SPOT_FUTURES']['MAX_ENTRY_AMOUNT_USDT']
+                        min_entry_amount = max(min_amount_for_profit, SETTINGS['SPOT_FUTURES']['MIN_ENTRY_AMOUNT_USDT'])
+
+                        if min_entry_amount > max_entry_amount:
+                            logger.debug(f"Пропускаем {base}: min_entry_amount > max_entry_amount")
+                            continue
+
+                        # Рассчитываем прибыль
+                        profit_min = calculate_profit(
+                            buy_price=min_spot[1]['price'],
+                            sell_price=max_futures[1]['price'],
+                            amount=min_entry_amount / min_spot[1]['price'],
+                            buy_fee_percent=spot_fee,
+                            sell_fee_percent=futures_fee
+                        )
+
+                        profit_max = calculate_profit(
+                            buy_price=min_spot[1]['price'],
+                            sell_price=max_futures[1]['price'],
+                            amount=max_entry_amount / min_spot[1]['price'],
+                            buy_fee_percent=spot_fee,
+                            sell_fee_percent=futures_fee
+                        )
+
+                        # Форматируем сообщение
+                        utc_plus_3 = timezone(timedelta(hours=3))
+                        current_time = datetime.now(utc_plus_3).strftime('%H:%M:%S')
+
+                        def format_volume(vol):
+                            if vol is None:
+                                return "N/A"
+                            if vol >= 1_000_000:
+                                return f"${vol / 1_000_000:.1f}M"
+                            if vol >= 1_000:
+                                return f"${vol / 1_000:.1f}K"
+                            return f"${vol:.1f}"
+
+                        spot_volume = format_volume(min_spot[1]['volume'])
+                        futures_volume = format_volume(max_futures[1]['volume'])
+
+                        safe_base = html.escape(base)
+                        spot_exchange_config = SPOT_EXCHANGES[min_spot[0]]
+                        futures_exchange_config = FUTURES_EXCHANGES[max_futures[0]]
+
+                        spot_url = spot_exchange_config["url_format"](min_spot[1]['symbol'])
+                        futures_url = futures_exchange_config["url_format"](
+                            max_futures[1]['symbol'].replace(':USDT', ''))
+                        withdraw_url = spot_exchange_config["withdraw_url"](base)
+                        deposit_url = spot_exchange_config["deposit_url"](base)
+
+                        message = (
+                            f"↔️ <b>Спот-Фьючерсный арбитраж:</b> <code>{safe_base}</code>\n"
+                            f"▫️ <b>Разница цен:</b> {spread:.2f}%\n"
+                            f"▫️ <b>Сумма входа:</b> ${min_entry_amount:.2f}-${max_entry_amount:.2f}\n\n"
+                            f"🟢 <b>Покупка на споте <a href='{spot_url}'>{min_spot[0].upper()}</a>:</b> ${min_spot[1]['price']:.8f}\n"
+                            f"   <b>Объём:</b> {spot_volume}\n"
+                            f"   <b>Комиссия:</b> {spot_fee * 100:.2f}%\n"
+                            f"   <b><a href='{withdraw_url}'>Вывод</a> | <a href='{deposit_url}'>Депозит</a></b>\n\n"
+                            f"🔴 <b>Шорт на фьючерсах <a href='{futures_url}'>{max_futures[0].upper()}</a>:</b> ${max_futures[1]['price']:.8f}\n"
+                            f"   <b>Объём:</b> {futures_volume}\n"
+                            f"   <b>Комиссия:</b> {futures_fee * 100:.3f}%\n\n"
+                            f"💰 <b>Чистая прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f} ({profit_max['percent']:.2f}%)\n\n"
+                            f"⏱ {current_time}\n"
+                        )
+
+                        logger.info(f"Найдена спот-фьючерсная арбитражная возможность: {base} ({spread:.2f}%)")
+                        await send_telegram_message(message)
+                        found_opportunities += 1
+
+                except Exception as e:
+                    logger.error(f"Ошибка обработки пары {base}: {e}")
+
+            logger.info(f"Цикл спот-фьючерсного арбитража завершен. Найдено возможностей: {found_opportunities}")
+            await asyncio.sleep(SETTINGS['SPOT_FUTURES']['CHECK_INTERVAL'])
+
+        except Exception as e:
+            logger.error(f"Ошибка в основном цикле спот-фьючерсного арбитража: {e}")
             await asyncio.sleep(60)
 
 
@@ -1302,6 +1573,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "📊 Статус бота":
         spot_status = "✅ ВКЛ" if SETTINGS['SPOT']['ENABLED'] else "❌ ВЫКЛ"
         futures_status = "✅ ВКЛ" if SETTINGS['FUTURES']['ENABLED'] else "❌ ВЫКЛ"
+        spot_futures_status = "✅ ВКЛ" if SETTINGS['SPOT_FUTURES']['ENABLED'] else "❌ ВЫКЛ"
 
         enabled_exchanges = [name for name, config in SETTINGS['EXCHANGES'].items() if config['ENABLED']]
         exchanges_status = ", ".join(enabled_exchanges) if enabled_exchanges else "Нет активных бирж"
@@ -1310,6 +1582,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🤖 <b>Статус бота</b>\n\n"
             f"🚀 Спотовый арбитраж: {spot_status}\n"
             f"📊 Фьючерсный арбитраж: {futures_status}\n"
+            f"↔️ Спот-Фьючерсный арбитраж: {spot_futures_status}\n"
             f"🏛 Активные биржи: {exchanges_status}",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
@@ -1428,6 +1701,14 @@ async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return FUTURES_SETTINGS
 
+    elif text == "↔️ Спот-Фьючерсы":
+        await update.message.reply_text(
+            "↔️ <b>Настройки спот-фьючерсного арбитража</b>\n\nВыберите параметр для изменения:",
+            parse_mode="HTML",
+            reply_markup=get_spot_futures_settings_keyboard()
+        )
+        return SPOT_FUTURES_SETTINGS
+
     elif text == "🏛 Биржи":
         await update.message.reply_text(
             "🏛 <b>Настройки бирж</b>\n\nВыберите биржу для включения/выключения:",
@@ -1441,6 +1722,7 @@ async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         SETTINGS = {
             "SPOT": DEFAULT_SPOT_SETTINGS.copy(),
             "FUTURES": DEFAULT_FUTURES_SETTINGS.copy(),
+            "SPOT_FUTURES": DEFAULT_SPOT_FUTURES_SETTINGS.copy(),
             "EXCHANGES": EXCHANGE_SETTINGS.copy()
         }
         save_settings(SETTINGS)
@@ -1501,7 +1783,7 @@ async def handle_spot_settings(update: Update, context: ContextTypes.DEFAULT_TYP
     elif text.startswith("Объем:"):
         context.user_data['setting'] = ('SPOT', 'MIN_VOLUME_USD')
         await update.message.reply_text(
-            f"Введите новое значение для минимального объема (текуще: ${SETTINGS['SPOT']['MIN_VOLUME_USD']}):"
+            f"Введите новое значение для минимального объема (текущее: ${SETTINGS['SPOT']['MIN_VOLUME_USD']}):"
         )
         return SETTING_VALUE
 
@@ -1563,7 +1845,7 @@ async def handle_futures_settings(update: Update, context: ContextTypes.DEFAULT_
 
     if text == "🔙 Назад в настройки":
         await update.message.reply_text(
-            "⚙️ <b>Настройки бота</b>\n\nВыберите категорию:",
+            "⚙️ <b>Настройки бота</b>\n\nВыберите категориу:",
             parse_mode="HTML",
             reply_markup=get_settings_keyboard()
         )
@@ -1615,7 +1897,7 @@ async def handle_futures_settings(update: Update, context: ContextTypes.DEFAULT_
     elif text.startswith("Прибыль:"):
         context.user_data['setting'] = ('FUTURES', 'MIN_NET_PROFIT_USD')
         await update.message.reply_text(
-            f"Введите новое значение для минимальной прибыль (текущее: ${SETTINGS['FUTURES']['MIN_NET_PROFIT_USD']}):"
+            f"Введите новое значение для минимальной прибыли (текущее: ${SETTINGS['FUTURES']['MIN_NET_PROFIT_USD']}):"
         )
         return SETTING_VALUE
 
@@ -1634,6 +1916,85 @@ async def handle_futures_settings(update: Update, context: ContextTypes.DEFAULT_
         reply_markup=get_futures_settings_keyboard()
     )
     return FUTURES_SETTINGS
+
+
+async def handle_spot_futures_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка настроек спот-фьючерсов"""
+    text = update.message.text
+
+    if text == "🔙 Назад в настройки":
+        await update.message.reply_text(
+            "⚙️ <b>Настройки бота</b>\n\nВыберите категорию:",
+            parse_mode="HTML",
+            reply_markup=get_settings_keyboard()
+        )
+        return SETTINGS_MENU
+
+    # Обработка изменения параметров
+    if text.startswith("Порог:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'THRESHOLD_PERCENT')
+        await update.message.reply_text(
+            f"Введите новое значение для порога арбитража (текущее: {SETTINGS['SPOT_FUTURES']['THRESHOLD_PERCENT']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. порог:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'MAX_THRESHOLD_PERCENT')
+        await update.message.reply_text(
+            f"Введите новое значение для максимального порога (текущее: {SETTINGS['SPOT_FUTURES']['MAX_THRESHOLD_PERCENT']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Интервал:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'CHECK_INTERVAL')
+        await update.message.reply_text(
+            f"Введите новое значение для интервала проверки (текущее: {SETTINGS['SPOT_FUTURES']['CHECK_INTERVAL']} сек):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Объем:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'MIN_VOLUME_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для минимального объема (текущее: ${SETTINGS['SPOT_FUTURES']['MIN_VOLUME_USD']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Мин. сумма:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'MIN_ENTRY_AMOUNT_USDT')
+        await update.message.reply_text(
+            f"Введите новое значение для минимальной суммы входа (текущее: ${SETTINGS['SPOT_FUTURES']['MIN_ENTRY_AMOUNT_USDT']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. сумма:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'MAX_ENTRY_AMOUNT_USDT')
+        await update.message.reply_text(
+            f"Введите новое значение для максимальной суммы входа (текущее: ${SETTINGS['SPOT_FUTURES']['MAX_ENTRY_AMOUNT_USDT']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Прибыль:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'MIN_NET_PROFIT_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для минимальной прибыли (текущее: ${SETTINGS['SPOT_FUTURES']['MIN_NET_PROFIT_USD']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Статус:"):
+        SETTINGS['SPOT_FUTURES']['ENABLED'] = not SETTINGS['SPOT_FUTURES']['ENABLED']
+        save_settings(SETTINGS)
+        status = "ВКЛ" if SETTINGS['SPOT_FUTURES']['ENABLED'] else "ВЫКЛ"
+        await update.message.reply_text(
+            f"✅ Спот-Фьючерсный арбитраж {status}",
+            reply_markup=get_spot_futures_settings_keyboard()
+        )
+        return SPOT_FUTURES_SETTINGS
+
+    await update.message.reply_text(
+        "Неизвестная команда. Используйте кнопки меню.",
+        reply_markup=get_spot_futures_settings_keyboard()
+    )
+    return SPOT_FUTURES_SETTINGS
 
 
 async def handle_exchange_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1703,12 +2064,18 @@ async def handle_setting_value(update: Update, context: ContextTypes.DEFAULT_TYP
                 reply_markup=get_spot_settings_keyboard()
             )
             return SPOT_SETTINGS
-        else:
+        elif category == 'FUTURES':
             await update.message.reply_text(
                 f"✅ Параметр {setting} изменен на {new_value}",
                 reply_markup=get_futures_settings_keyboard()
             )
             return FUTURES_SETTINGS
+        elif category == 'SPOT_FUTURES':
+            await update.message.reply_text(
+                f"✅ Параметр {setting} изменен на {new_value}",
+                reply_markup=get_spot_futures_settings_keyboard()
+            )
+            return SPOT_FUTURES_SETTINGS
 
     except ValueError:
         await update.message.reply_text("❌ Пожалуйста, введите числовое значение:")
@@ -1735,6 +2102,7 @@ async def start_bot():
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings)],
             SPOT_SETTINGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_spot_settings)],
             FUTURES_SETTINGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_futures_settings)],
+            SPOT_FUTURES_SETTINGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_spot_futures_settings)],
             EXCHANGE_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_exchange_settings)],
             SETTING_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_setting_value)],
             COIN_SELECTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_coin_selection)],
@@ -1764,6 +2132,14 @@ async def main():
         # Запускаем арбитражные задачи параллельно
         spot_task = asyncio.create_task(check_spot_arbitrage())
         futures_task = asyncio.create_task(check_futures_arbitrage())
+        spot_futures_task = asyncio.create_task(check_spot_futures_arbitrage())
+
+        # Отправляем сообщение о запуске
+        await send_telegram_message("🤖 <b>Бот успешно запущен!</b>\n\n"
+                                  "🚀 Спотовый арбитраж: " + ("✅ ВКЛ" if SETTINGS['SPOT']['ENABLED'] else "❌ ВЫКЛ") + "\n"
+                                  "📊 Фьючерсный арбитраж: " + ("✅ ВКЛ" if SETTINGS['FUTURES']['ENABLED'] else "❌ ВЫКЛ") + "\n"
+                                  "↔️ Спот-Фьючерсный арбитраж: " + ("✅ ВКЛ" if SETTINGS['SPOT_FUTURES']['ENABLED'] else "❌ ВЫКЛ") + "\n\n"
+                                  "Используйте /start для просмотра меню")
 
         # Бесконечное ожидание
         while True:
@@ -1771,6 +2147,7 @@ async def main():
 
     except Exception as e:
         logger.error(f"Фатальная ошибка: {e}")
+        await send_telegram_message(f"❌ <b>Бот остановлен из-за ошибки:</b>\n{str(e)}")
     finally:
         logger.info("Бот остановлен")
 
