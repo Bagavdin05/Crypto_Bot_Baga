@@ -20,7 +20,7 @@ import os
 
 # Общая конфигурация
 TELEGRAM_TOKEN = "8357883688:AAG5E-IwqpbTn7hJ_320wpvKQpNfkm_QQeo"
-TELEGRAM_CHAT_IDS = ["1167694150", "7916502470", "5381553894", "1111230981", "912731125"]  # ID пользователей с доступом
+TELEGRAM_CHAT_IDS = ["1167694150", "7916502470", "5381553894", "1111230981", "912731125"]
 
 # Конфигурация спотового арбитража (по умолчанию)
 DEFAULT_SPOT_SETTINGS = {
@@ -28,7 +28,7 @@ DEFAULT_SPOT_SETTINGS = {
     "MAX_THRESHOLD_PERCENT": 40,
     "CHECK_INTERVAL": 30,
     "MIN_EXCHANGES_FOR_PAIR": 2,
-    "MIN_VOLUME_USD": 700000,
+    "MIN_VOLUME_USD": 1000000,
     "MIN_ENTRY_AMOUNT_USDT": 5,
     "MAX_ENTRY_AMOUNT_USDT": 120,
     "MAX_IMPACT_PERCENT": 0.5,
@@ -42,7 +42,7 @@ DEFAULT_FUTURES_SETTINGS = {
     "THRESHOLD_PERCENT": 0.5,
     "MAX_THRESHOLD_PERCENT": 20,
     "CHECK_INTERVAL": 30,
-    "MIN_VOLUME_USD": 700000,
+    "MIN_VOLUME_USD": 1000000,
     "MIN_EXCHANGES_FOR_PAIR": 2,
     "MIN_ENTRY_AMOUNT_USDT": 5,
     "MAX_ENTRY_AMOUNT_USDT": 60,
@@ -60,7 +60,12 @@ EXCHANGE_SETTINGS = {
     "kucoin": {"ENABLED": True},
     "htx": {"ENABLED": True},
     "bingx": {"ENABLED": True},
-    "phemex": {"ENABLED": True}
+    "phemex": {"ENABLED": True},
+    "coinex": {"ENABLED": True},
+    "xt": {"ENABLED": True},
+    "ascendex": {"ENABLED": True},
+    "bitrue": {"ENABLED": True},
+    "blofin": {"ENABLED": True}
 }
 
 # Состояния для ConversationHandler
@@ -206,6 +211,66 @@ SPOT_EXCHANGES = {
         "withdraw_url": lambda c: f"https://phemex.com/assets/withdraw?asset={c}",
         "deposit_url": lambda c: f"https://phemex.com/assets/deposit?asset={c}",
         "emoji": "🏛"
+    },
+    "coinex": {
+        "api": ccxt.coinex({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT",
+        "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
+        "taker_fee": 0.002,
+        "maker_fee": 0.001,
+        "url_format": lambda s: f"https://www.coinex.com/exchange/{s.replace('/', '-')}",
+        "withdraw_url": lambda c: f"https://www.coinex.com/asset/withdraw/{c}",
+        "deposit_url": lambda c: f"https://www.coinex.com/asset/deposit/{c}",
+        "emoji": "🏛"
+    },
+    "xt": {
+        "api": ccxt.xt({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT",
+        "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
+        "taker_fee": 0.002,
+        "maker_fee": 0.002,
+        "url_format": lambda s: f"https://www.xt.com/trade/{s.replace('/', '_')}",
+        "withdraw_url": lambda c: f"https://www.xt.com/asset/withdraw/{c}",
+        "deposit_url": lambda c: f"https://www.xt.com/asset/deposit/{c}",
+        "emoji": "🏛"
+    },
+    "ascendex": {
+        "api": ccxt.ascendex({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT",
+        "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
+        "taker_fee": 0.001,
+        "maker_fee": 0.001,
+        "url_format": lambda s: f"https://ascendex.com/en/cashtrade-spot/{s.replace('/', '-')}",
+        "withdraw_url": lambda c: f"https://ascendex.com/en/asset/withdraw/{c}",
+        "deposit_url": lambda c: f"https://ascendex.com/en/asset/deposit/{c}",
+        "emoji": "🏛"
+    },
+    "bitrue": {
+        "api": ccxt.bitrue({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT",
+        "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
+        "taker_fee": 0.001,
+        "maker_fee": 0.001,
+        "url_format": lambda s: f"https://www.bitrue.com/trade/{s.replace('/', '_')}",
+        "withdraw_url": lambda c: f"https://www.bitrue.com/asset/withdraw/{c}",
+        "deposit_url": lambda c: f"https://www.bitrue.com/asset/deposit/{c}",
+        "emoji": "🏛"
+    },
+    "blofin": {
+        "api": ccxt.blofin({
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "spot"
+            }
+        }),
+        "symbol_format": lambda s: f"{s}/USDT",
+        "is_spot": lambda m: m.get('type') == 'spot' and m['quote'] == 'USDT',
+        "taker_fee": 0.001,
+        "maker_fee": 0.001,
+        "url_format": lambda s: f"https://www.blofin.com/spot/{s.replace('/', '-')}",
+        "withdraw_url": lambda c: f"https://www.blofin.com/assets/withdraw/{c}",
+        "deposit_url": lambda c: f"https://www.blofin.com/assets/deposit/{c}",
+        "emoji": "🏛"
     }
 }
 
@@ -275,8 +340,8 @@ FUTURES_EXCHANGES = {
         "api": ccxt.htx({
             "enableRateLimit": True,
             "options": {
-                "defaultType": "swap",  # Исправление для фьючерсов
-                "fetchMarkets": ["swap"]  # Загружаем только swap-рынки
+                "defaultType": "swap",
+                "fetchMarkets": ["swap"]
             }
         }),
         "symbol_format": lambda s: f"{s}/USDT:USDT",
@@ -301,7 +366,7 @@ FUTURES_EXCHANGES = {
         "api": ccxt.phemex({
             "enableRateLimit": True,
             "options": {
-                "defaultType": "swap",  # Исправление для фьючерсов
+                "defaultType": "swap",
             }
         }),
         "symbol_format": lambda s: f"{s}/USDT:USDT",
@@ -309,6 +374,61 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0006,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://phemex.com/futures/trade/{s.replace('/', '').replace(':USDT', '')}",
+        "blacklist": [],
+        "emoji": "🏛"
+    },
+    "coinex": {
+        "api": ccxt.coinex({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT:USDT",
+        "is_futures": lambda m: (m.get('swap', False) or m.get('future', False)) and m['settle'] == 'USDT',
+        "taker_fee": 0.001,
+        "maker_fee": 0.001,
+        "url_format": lambda s: f"https://www.coinex.com/perpetual/{s.replace('/', '-').replace(':USDT', '')}",
+        "blacklist": [],
+        "emoji": "🏛"
+    },
+    "xt": {
+        "api": ccxt.xt({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT:USDT",
+        "is_futures": lambda m: (m.get('swap', False) or m.get('future', False)) and m['settle'] == 'USDT',
+        "taker_fee": 0.002,
+        "maker_fee": 0.002,
+        "url_format": lambda s: f"https://www.xt.com/futures/{s.replace('/', '_').replace(':USDT', '')}",
+        "blacklist": [],
+        "emoji": "🏛"
+    },
+    "ascendex": {
+        "api": ccxt.ascendex({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT:USDT",
+        "is_futures": lambda m: (m.get('swap', False) or m.get('future', False)) and m['settle'] == 'USDT',
+        "taker_fee": 0.001,
+        "maker_fee": 0.001,
+        "url_format": lambda s: f"https://ascendex.com/en/futures/{s.replace('/', '-').replace(':USDT', '')}",
+        "blacklist": [],
+        "emoji": "🏛"
+    },
+    "bitrue": {
+        "api": ccxt.bitrue({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT:USDT",
+        "is_futures": lambda m: (m.get('swap', False) or m.get('future', False)) and m['settle'] == 'USDT',
+        "taker_fee": 0.001,
+        "maker_fee": 0.001,
+        "url_format": lambda s: f"https://www.bitrue.com/futures/{s.replace('/', '_').replace(':USDT', '')}",
+        "blacklist": [],
+        "emoji": "🏛"
+    },
+    "blofin": {
+        "api": ccxt.blofin({
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "swap"
+            }
+        }),
+        "symbol_format": lambda s: f"{s}/USDT:USDT",
+        "is_futures": lambda m: (m.get('swap', False) or m.get('future', False)) and m['settle'] == 'USDT',
+        "taker_fee": 0.0006,
+        "maker_fee": 0.0002,
+        "url_format": lambda s: f"https://www.blofin.com/futures/{s.replace('/', '-').replace(':USDT', '')}",
         "blacklist": [],
         "emoji": "🏛"
     }
@@ -353,7 +473,7 @@ def get_futures_settings_keyboard():
     return ReplyKeyboardMarkup([
         [KeyboardButton(f"Порог: {futures['THRESHOLD_PERCENT']}%"),
          KeyboardButton(f"Макс. порог: {futures['MAX_THRESHOLD_PERCENT']}%")],
-        [KeyboardButton(f"Интервал: {futures['CHECK_INTERVAL']}с"),
+        [KeyboardButton(f"Интервал: {futures['CHECK_INERAL']}с"),
          KeyboardButton(f"Объем: ${futures['MIN_VOLUME_USD'] / 1000:.0f}K")],
         [KeyboardButton(f"Мин. сумма: ${futures['MIN_ENTRY_AMOUNT_USDT']}"),
          KeyboardButton(f"Макс. сумма: ${futures['MAX_ENTRY_AMOUNT_USDT']}")],
@@ -579,11 +699,22 @@ async def check_spot_arbitrage():
             continue
 
         try:
+            # Для BloFin устанавливаем правильный тип рынка
+            if name == "blofin":
+                config["api"].options['defaultType'] = 'spot'
+
             exchange = await asyncio.get_event_loop().run_in_executor(
                 None, load_markets_sync, config["api"])
             if exchange:
                 exchanges[name] = {"api": exchange, "config": config}
                 logger.info(f"{name.upper()} успешно загружена")
+
+                # Дополнительная проверка для BloFin
+                if name == "blofin":
+                    spot_markets = [m for m in exchange.markets.values() if config["is_spot"](m)]
+                    logger.info(f"BloFin спотовые рынки: {len(spot_markets)}")
+                    for market in spot_markets[:5]:  # Показать первые 5 рынков для проверки
+                        logger.info(f"BloFin рынок: {market['symbol']}")
         except Exception as e:
             logger.error(f"Ошибка инициализации {name}: {e}")
 
@@ -615,7 +746,7 @@ async def check_spot_arbitrage():
     }
 
     if not valid_pairs:
-        logger.error("Нет пар, торгуемых хотя бы на двух биржах")
+        logger.error("Нет пар, торгуемых хотя бы на двух биржаш")
         return
 
     logger.info(f"Найдено {len(valid_pairs)} пар для анализа")
@@ -827,7 +958,7 @@ async def check_futures_arbitrage():
     logger.info("Запуск проверки фьючерсного арбитража")
 
     if not SETTINGS['FUTURES']['ENABLED']:
-        logger.info("Фьючерсный арбитраж отключен в настройках")
+        logger.info("Фьючерсный арбитраж отключен в настройки")
         return
 
     # Инициализация бирж
@@ -838,6 +969,10 @@ async def check_futures_arbitrage():
             continue
 
         try:
+            # Для BloFin устанавливаем правильный тип рынка
+            if name == "blofin":
+                config["api"].options['defaultType'] = 'swap'
+
             exchange = await asyncio.get_event_loop().run_in_executor(
                 None, load_markets_sync, config["api"]
             )
@@ -920,8 +1055,7 @@ async def check_futures_arbitrage():
                     logger.debug(
                         f"Пара {base}: спред {spread:.2f}% (min: {min_ex[0]} {min_ex[1]['price']}, max: {max_ex[0]} {max_ex[1]['price']})")
 
-                    if SETTINGS['FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['FUTURES'][
-                        'MAX_THRESHOLD_PERCENT']:
+                    if SETTINGS['FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['FUTURES']['MAX_THRESHOLD_PERCENT']:
                         # Получаем комиссии
                         buy_fee = exchanges[min_ex[0]]["config"]["taker_fee"]
                         sell_fee = exchanges[max_ex[0]]["config"]["taker_fee"]
@@ -996,7 +1130,7 @@ async def check_futures_arbitrage():
                             f"   <b>Комиссия:</b> {buy_fee * 100:.3f}%\n\n"
                             f"🔴 <b>Шорт на <a href='{sell_url}'>{max_ex[0].upper()}</a>:</b> ${max_ex[1]['price']:.8f}\n"
                             f"   <b>Объём:</b> {max_volume}\n"
-                            f"   <b>Комиссия:</b> {sell_fee * 100:.3f}%\n\n"
+                            f"   <б>Комиссия:</b> {sell_fee * 100:.3f}%\n\n"
                             f"💰 <b>Чистая прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f} ({profit_max['percent']:.2f}%)\n\n"
                             f"⏱ {current_time}\n"
                         )
@@ -1103,6 +1237,11 @@ async def get_coin_prices(coin: str, market_type: str):
     market_color = "🚀" if market_type == "spot" else "📊"
 
     if results:
+        # Рассчитываем разницу в процентах между самой низкой и высокой ценой
+        min_price = results[0]["price"]
+        max_price = results[-1]["price"]
+        price_diff_percent = ((max_price - min_price) / min_price) * 100
+
         # Формируем заголовок
         response = f"{market_color} <b>{market_name} рынки для <code>{coin}</code>:</b>\n\n"
 
@@ -1119,8 +1258,9 @@ async def get_coin_prices(coin: str, market_type: str):
             if idx < len(results):
                 response += "\n"
 
-        # Добавляем время и количество бирж
-        response += f"\n⏱ {current_time} | Бирж: {found_on}"
+        # Добавляем разницу цен и время
+        response += f"\n📈 <b>Разница цен:</b> {price_diff_percent:.2f}%\n"
+        response += f"⏱ {current_time} | Бирж: {found_on}"
     else:
         response = f"❌ Монета {coin} не найдена на {market_name} рынке"
 
@@ -1361,7 +1501,7 @@ async def handle_spot_settings(update: Update, context: ContextTypes.DEFAULT_TYP
     elif text.startswith("Объем:"):
         context.user_data['setting'] = ('SPOT', 'MIN_VOLUME_USD')
         await update.message.reply_text(
-            f"Введите новое значение для минимального объема (текущее: ${SETTINGS['SPOT']['MIN_VOLUME_USD']}):"
+            f"Введите новое значение для минимального объема (текуще: ${SETTINGS['SPOT']['MIN_VOLUME_USD']}):"
         )
         return SETTING_VALUE
 
