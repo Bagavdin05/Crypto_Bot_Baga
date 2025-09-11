@@ -413,11 +413,20 @@ FUTURES_EXCHANGES = {
         "emoji": "📊"
     },
     "ascendex": {
-        "api": ccxt.ascendex({"enableRateLimit": True}),
+        "api": ccxt.ascendex({
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "swap",  # Явно указываем тип по умолчанию
+            }
+        }),
         "symbol_format": lambda s: f"{s}/USDT:USDT",
-        "is_futures": lambda m: (m.get('swap', False) or m.get('future', False)) and m['settle'] == 'USDT',
-        "taker_fee": 0.001,
-        "maker_fee": 0.001,
+        "is_futures": lambda m: (
+                m.get('type') in ['swap', 'future'] and
+                m.get('settle') == 'USDT' and
+                m.get('linear', False)  # Убедимся что это линейный контракт
+        ),
+        "taker_fee": 0.0006,  # Обновленная комиссия
+        "maker_fee": 0.0002,
         "url_format": lambda s: f"https://ascendex.com/en/futures/{s.replace('/', '-').replace(':USDT', '')}",
         "blacklist": [],
         "emoji": "📊"
@@ -561,9 +570,22 @@ def load_markets_sync(exchange):
 
 async def fetch_ticker_data(exchange, symbol: str):
     try:
-        ticker = await asyncio.get_event_loop().run_in_executor(
-            None, exchange.fetch_ticker, symbol
-        )
+        # Для AscendEX используем альтернативный метод если основной не работает
+        if exchange.id == "ascendex":
+            try:
+                # Пробуем альтернативный метод получения данных
+                ticker = await asyncio.get_event_loop().run_in_executor(
+                    None, exchange.fetch_ticker, symbol.replace(':USDT', '-USDT')
+                )
+            except:
+                ticker = await asyncio.get_event_loop().run_in_executor(
+                    None, exchange.fetch_ticker, symbol
+                )
+        else:
+            ticker = await asyncio.get_event_loop().run_in_executor(
+                None, exchange.fetch_ticker, symbol
+            )
+
         if ticker:
             price = float(ticker['last']) if ticker.get('last') else None
 
