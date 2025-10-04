@@ -92,6 +92,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("CryptoArbBot")
 
+# Глобальные переменные для управления задачами
+SPOT_TASK = None
+FUTURES_TASK = None
+SPOT_FUTURES_TASK = None
+SHARED_BOT = None
+SPOT_EXCHANGES_LOADED = {}
+FUTURES_EXCHANGES_LOADED = {}
+
 
 # Загрузка сохраненных настроек
 def load_settings():
@@ -120,10 +128,7 @@ def save_settings(settings):
         logger.error(f"Ошибка сохранения настроек: {e}")
 
 
-# Глобальные переменные
-SHARED_BOT = None
-SPOT_EXCHANGES_LOADED = {}
-FUTURES_EXCHANGES_LOADED = {}
+# Инициализация настроек
 SETTINGS = load_settings()
 
 # Конфигурация бирж для спота
@@ -416,16 +421,16 @@ FUTURES_EXCHANGES = {
         "api": ccxt.ascendex({
             "enableRateLimit": True,
             "options": {
-                "defaultType": "swap",  # Явно указываем тип по умолчанию
+                "defaultType": "swap",
             }
         }),
         "symbol_format": lambda s: f"{s}/USDT:USDT",
         "is_futures": lambda m: (
                 m.get('type') in ['swap', 'future'] and
                 m.get('settle') == 'USDT' and
-                m.get('linear', False)  # Убедимся что это линейный контракт
+                m.get('linear', False)
         ),
-        "taker_fee": 0.0006,  # Обновленная комиссия
+        "taker_fee": 0.0006,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://ascendex.com/en/futures/{s.replace('/', '-').replace(':USDT', '')}",
         "blacklist": [],
@@ -570,10 +575,8 @@ def load_markets_sync(exchange):
 
 async def fetch_ticker_data(exchange, symbol: str):
     try:
-        # Для AscendEX используем альтернативный метод если основной не работает
         if exchange.id == "ascendex":
             try:
-                # Пробуем альтернативный метод получения данных
                 ticker = await asyncio.get_event_loop().run_in_executor(
                     None, exchange.fetch_ticker, symbol.replace(':USDT', '-USDT')
                 )
@@ -589,7 +592,6 @@ async def fetch_ticker_data(exchange, symbol: str):
         if ticker:
             price = float(ticker['last']) if ticker.get('last') else None
 
-            # Пытаемся получить объем из разных источников
             volume = None
             if ticker.get('quoteVolume') is not None:
                 volume = float(ticker['quoteVolume'])
@@ -739,75 +741,72 @@ def calculate_profit(buy_price: float, sell_price: float, amount: float, buy_fee
 async def check_spot_arbitrage():
     logger.info("Запуск проверки спотового арбитража")
 
-    if not SETTINGS['SPOT']['ENABLED']:
-        logger.info("Спотовый арбитраж отключен в настройках")
-        return
-
-    # Инициализация бирж
-    global SPOT_EXCHANGES_LOADED
-    exchanges = {}
-    for name, config in SPOT_EXCHANGES.items():
-        if not SETTINGS['EXCHANGES'][name]['ENABLED']:
+    while True:
+        # Проверяем настройки в начале каждой итерации
+        if not SETTINGS['SPOT']['ENABLED']:
+            logger.info("Спотовый арбитраж отключен в настройках")
+            await asyncio.sleep(10)
             continue
 
-        try:
-            # Для BloFin устанавливаем правильный тип рынка
-            if name == "blofin":
-                config["api"].options['defaultType'] = 'spot'
+        # Инициализация бирж с учетом текущих настроек
+        exchanges = {}
+        for name, config in SPOT_EXCHANGES.items():
+            if not SETTINGS['EXCHANGES'][name]['ENABLED']:
+                continue
 
-            exchange = await asyncio.get_event_loop().run_in_executor(
-                None, load_markets_sync, config["api"])
-            if exchange:
-                exchanges[name] = {"api": exchange, "config": config}
-                logger.info(f"{name.upper()} успешно загружена")
-
-                # Дополнительная проверка для BloFin
-                if name == "blofin":
-                    spot_markets = [m for m in exchange.markets.values() if config["is_spot"](m)]
-                    logger.info(f"BloFin спотовые рынки: {len(spot_markets)}")
-                    for market in spot_markets[:5]:  # Показать первые 5 рынков для проверки
-                        logger.info(f"BloFin рынок: {market['symbol']}")
-        except Exception as e:
-            logger.error(f"Ошибка инициализации {name}: {e}")
-
-    SPOT_EXCHANGES_LOADED = exchanges
-
-    if len(exchanges) < SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']:
-        logger.error(
-            f"Недостаточно бирж (нужно минимум {SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']})")
-        return
-
-    # Сбор всех торговых пар
-    all_pairs = defaultdict(set)
-    for name, data in exchanges.items():
-        exchange = data["api"]
-        config = data["config"]
-        for symbol, market in exchange.markets.items():
             try:
-                if config["is_spot"](market):
-                    base = market['base']
-                    all_pairs[base].add((name, symbol))
+                if name == "blofin":
+                    config["api"].options['defaultType'] = 'spot'
+
+                exchange = await asyncio.get_event_loop().run_in_executor(
+                    None, load_markets_sync, config["api"])
+                if exchange:
+                    exchanges[name] = {"api": exchange, "config": config}
+                    logger.info(f"{name.upper()} успешно загружена")
             except Exception as e:
-                logger.warning(
-                    f"Ошибка обработки пары {symbol} на {name}: {e}")
+                logger.error(f"Ошибка инициализации {name}: {e}")
 
-    valid_pairs = {
-        base: list(pairs)
-        for base, pairs in all_pairs.items()
-        if len(pairs) >= SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']
-    }
+        if len(exchanges) < SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']:
+            logger.error(
+                f"Недостаточно бирж (нужно минимум {SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']})")
+            await asyncio.sleep(SETTINGS['SPOT']['CHECK_INTERVAL'])
+            continue
 
-    if not valid_pairs:
-        logger.error("Нет пар, торгуемых хотя бы на двух биржах")
-        return
+        # Сбор всех торговых пар
+        all_pairs = defaultdict(set)
+        for name, data in exchanges.items():
+            exchange = data["api"]
+            config = data["config"]
+            for symbol, market in exchange.markets.items():
+                try:
+                    if config["is_spot"](market):
+                        base = market['base']
+                        all_pairs[base].add((name, symbol))
+                except Exception as e:
+                    logger.warning(
+                        f"Ошибка обработки пары {symbol} на {name}: {e}")
 
-    logger.info(f"Найдено {len(valid_pairs)} пар для анализа")
+        valid_pairs = {
+            base: list(pairs)
+            for base, pairs in all_pairs.items()
+            if len(pairs) >= SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']
+        }
 
-    while SETTINGS['SPOT']['ENABLED']:
+        if not valid_pairs:
+            logger.error("Нет пар, торгуемых хотя бы на двух биржах")
+            await asyncio.sleep(SETTINGS['SPOT']['CHECK_INTERVAL'])
+            continue
+
+        logger.info(f"Найдено {len(valid_pairs)} пар для анализа")
+
         try:
             found_opportunities = 0
             for base, exchange_symbols in valid_pairs.items():
                 try:
+                    # Дополнительная проверка на включенность арбитража
+                    if not SETTINGS['SPOT']['ENABLED']:
+                        break
+
                     ticker_data = {}
 
                     # Получаем данные тикеров для всех бирж
@@ -816,7 +815,6 @@ async def check_spot_arbitrage():
                             data = await fetch_ticker_data(
                                 exchanges[name]["api"], symbol)
                             if data and data['price'] is not None:
-                                # Если объем известен, проверяем минимальный объем
                                 if data['volume'] is None:
                                     logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
                                     ticker_data[name] = data
@@ -999,80 +997,84 @@ async def check_spot_arbitrage():
 
             logger.info(
                 f"Цикл спотового арбитража завершен. Найдено возможностей: {found_opportunities}")
-            await asyncio.sleep(SETTINGS['SPOT']['CHECK_INTERVAL'])
 
         except Exception as e:
             logger.error(f"Ошибка в основном цикле спотового арбитража: {e}")
-            await asyncio.sleep(60)
+
+        await asyncio.sleep(SETTINGS['SPOT']['CHECK_INTERVAL'])
 
 
 async def check_futures_arbitrage():
     logger.info("Запуск проверки фьючерсного арбитража")
 
-    if not SETTINGS['FUTURES']['ENABLED']:
-        logger.info("Фьючерсный арбитраж отключен в настройках")
-        return
-
-    # Инициализация бирж
-    global FUTURES_EXCHANGES_LOADED
-    exchanges = {}
-    for name, config in FUTURES_EXCHANGES.items():
-        if not SETTINGS['EXCHANGES'][name]['ENABLED']:
+    while True:
+        # Проверяем настройки в начале каждой итерации
+        if not SETTINGS['FUTURES']['ENABLED']:
+            logger.info("Фьючерсный арбитраж отключен в настройках")
+            await asyncio.sleep(10)
             continue
 
-        try:
-            # Для BloFin устанавливаем правильный тип рынка
-            if name == "blofin":
-                config["api"].options['defaultType'] = 'swap'
+        # Инициализация бирж с учетом текущих настроек
+        exchanges = {}
+        for name, config in FUTURES_EXCHANGES.items():
+            if not SETTINGS['EXCHANGES'][name]['ENABLED']:
+                continue
 
-            exchange = await asyncio.get_event_loop().run_in_executor(
-                None, load_markets_sync, config["api"]
-            )
-            if exchange:
-                exchanges[name] = {
-                    "api": exchange,
-                    "config": config
-                }
-                logger.info(f"{name.upper()} успешно загружена")
-        except Exception as e:
-            logger.error(f"Ошибка инициализации {name}: {e}")
-
-    FUTURES_EXCHANGES_LOADED = exchanges
-
-    if len(exchanges) < SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']:
-        logger.error(f"Недостаточно бирж (нужно минимум {SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']})")
-        return
-
-    # Сбор всех торговых пар USDT
-    all_pairs = defaultdict(set)
-    for name, data in exchanges.items():
-        exchange = data["api"]
-        config = data["config"]
-        for symbol, market in exchange.markets.items():
             try:
-                if config["is_futures"](market):
-                    base = market['base']
-                    if base not in config["blacklist"]:
-                        all_pairs[base].add((name, symbol))
+                if name == "blofin":
+                    config["api"].options['defaultType'] = 'swap'
+
+                exchange = await asyncio.get_event_loop().run_in_executor(
+                    None, load_markets_sync, config["api"]
+                )
+                if exchange:
+                    exchanges[name] = {
+                        "api": exchange,
+                        "config": config
+                    }
+                    logger.info(f"{name.upper()} успешно загружена")
             except Exception as e:
-                logger.warning(f"Ошибка обработки пары {symbol} на {name}: {e}")
+                logger.error(f"Ошибка инициализации {name}: {e}")
 
-    valid_pairs = {
-        base: list(pairs) for base, pairs in all_pairs.items()
-        if len(pairs) >= SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']
-    }
+        if len(exchanges) < SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']:
+            logger.error(f"Недостаточно бирж (нужно минимум {SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']})")
+            await asyncio.sleep(SETTINGS['FUTURES']['CHECK_INTERVAL'])
+            continue
 
-    if not valid_pairs:
-        logger.error("Нет фьючерсных USDT пар, торгуемых хотя бы на двух биржах")
-        return
+        # Сбор всех торговых пар USDT
+        all_pairs = defaultdict(set)
+        for name, data in exchanges.items():
+            exchange = data["api"]
+            config = data["config"]
+            for symbol, market in exchange.markets.items():
+                try:
+                    if config["is_futures"](market):
+                        base = market['base']
+                        if base not in config["blacklist"]:
+                            all_pairs[base].add((name, symbol))
+                except Exception as e:
+                    logger.warning(f"Ошибка обработки пары {symbol} на {name}: {e}")
 
-    logger.info(f"Найдено {len(valid_pairs)} фьючерсных USDT пар для анализа")
+        valid_pairs = {
+            base: list(pairs) for base, pairs in all_pairs.items()
+            if len(pairs) >= SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']
+        }
 
-    while SETTINGS['FUTURES']['ENABLED']:
+        if not valid_pairs:
+            logger.error("Нет фьючерсных USDT пар, торгуемых хотя бы на двух биржах")
+            await asyncio.sleep(SETTINGS['FUTURES']['CHECK_INTERVAL'])
+            continue
+
+        logger.info(f"Найдено {len(valid_pairs)} фьючерсных USDT пар для анализа")
+
         try:
             found_opportunities = 0
             for base, exchange_symbols in valid_pairs.items():
                 try:
+                    # Дополнительная проверка на включенность арбитража
+                    if not SETTINGS['FUTURES']['ENABLED']:
+                        break
+
                     ticker_data = {}
 
                     # Получаем данные тикеров для всех бирж
@@ -1080,7 +1082,6 @@ async def check_futures_arbitrage():
                         try:
                             data = await fetch_ticker_data(exchanges[name]["api"], symbol)
                             if data and data['price'] is not None:
-                                # Если объем известен, проверяем минимальный объем
                                 if data['volume'] is None:
                                     logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
                                     ticker_data[name] = data
@@ -1196,26 +1197,25 @@ async def check_futures_arbitrage():
                     logger.error(f"Ошибка обработки пары {base}: {e}")
 
             logger.info(f"Цикл фьючерсного арбитража завершен. Найдено возможностей: {found_opportunities}")
-            await asyncio.sleep(SETTINGS['FUTURES']['CHECK_INTERVAL'])
 
         except Exception as e:
             logger.error(f"Ошибка в основном цикле фьючерсного арбитража: {e}")
-            await asyncio.sleep(60)
+
+        await asyncio.sleep(SETTINGS['FUTURES']['CHECK_INTERVAL'])
 
 
 async def check_spot_futures_arbitrage():
     """Проверка спот-фьючерсного арбитража"""
     logger.info("Запуск проверки спот-фьючерсного арбитража")
 
-    if not SETTINGS['SPOT_FUTURES']['ENABLED']:
-        logger.info("Спот-фьючерсный арбитраж отключен в настройках")
-        return
+    while True:
+        # Проверяем настройки в начале каждой итерации
+        if not SETTINGS['SPOT_FUTURES']['ENABLED']:
+            logger.info("Спот-фьючерсный арбитраж отключен в настройках")
+            await asyncio.sleep(10)
+            continue
 
-    # Инициализация бирж
-    global SPOT_EXCHANGES_LOADED, FUTURES_EXCHANGES_LOADED
-
-    # Загружаем спотовые биржи, если еще не загружены
-    if not SPOT_EXCHANGES_LOADED:
+        # Инициализация бирж с учетом текущих настроек
         spot_exchanges = {}
         for name, config in SPOT_EXCHANGES.items():
             if not SETTINGS['EXCHANGES'][name]['ENABLED']:
@@ -1229,10 +1229,7 @@ async def check_spot_futures_arbitrage():
                     spot_exchanges[name] = {"api": exchange, "config": config}
             except Exception as e:
                 logger.error(f"Ошибка инициализации спотовой биржи {name}: {e}")
-        SPOT_EXCHANGES_LOADED = spot_exchanges
 
-    # Загружаем фьючерсные биржи, если еще не загружены
-    if not FUTURES_EXCHANGES_LOADED:
         futures_exchanges = {}
         for name, config in FUTURES_EXCHANGES.items():
             if not SETTINGS['EXCHANGES'][name]['ENABLED']:
@@ -1246,62 +1243,66 @@ async def check_spot_futures_arbitrage():
                     futures_exchanges[name] = {"api": exchange, "config": config}
             except Exception as e:
                 logger.error(f"Ошибка инициализации фьючерсной биржи {name}: {e}")
-        FUTURES_EXCHANGES_LOADED = futures_exchanges
 
-    if len(SPOT_EXCHANGES_LOADED) < 1 or len(FUTURES_EXCHANGES_LOADED) < 1:
-        logger.error("Недостаточно бирж для спот-фьючерсного арбитража")
-        return
+        if len(spot_exchanges) < 1 or len(futures_exchanges) < 1:
+            logger.error("Недостаточно бирж для спот-фьючерсного арбитража")
+            await asyncio.sleep(SETTINGS['SPOT_FUTURES']['CHECK_INTERVAL'])
+            continue
 
-    # Собираем все торговые пары
-    spot_pairs = defaultdict(set)
-    futures_pairs = defaultdict(set)
+        # Собираем все торговые пары
+        spot_pairs = defaultdict(set)
+        futures_pairs = defaultdict(set)
 
-    # Собираем спотовые пары
-    for name, data in SPOT_EXCHANGES_LOADED.items():
-        exchange = data["api"]
-        config = data["config"]
-        for symbol, market in exchange.markets.items():
-            try:
-                if config["is_spot"](market):
-                    base = market['base']
-                    spot_pairs[base].add((name, symbol))
-            except Exception as e:
-                logger.warning(f"Ошибка обработки спотовой пары {symbol} на {name}: {e}")
+        # Собираем спотовые пары
+        for name, data in spot_exchanges.items():
+            exchange = data["api"]
+            config = data["config"]
+            for symbol, market in exchange.markets.items():
+                try:
+                    if config["is_spot"](market):
+                        base = market['base']
+                        spot_pairs[base].add((name, symbol))
+                except Exception as e:
+                    logger.warning(f"Ошибка обработки спотовой пары {symbol} на {name}: {e}")
 
-    # Собираем фьючерсные пары
-    for name, data in FUTURES_EXCHANGES_LOADED.items():
-        exchange = data["api"]
-        config = data["config"]
-        for symbol, market in exchange.markets.items():
-            try:
-                if config["is_futures"](market):
-                    base = market['base']
-                    if base not in config["blacklist"]:
-                        futures_pairs[base].add((name, symbol))
-            except Exception as e:
-                logger.warning(f"Ошибка обработки фьючерсной пары {symbol} на {name}: {e}")
+        # Собираем фьючерсные пары
+        for name, data in futures_exchanges.items():
+            exchange = data["api"]
+            config = data["config"]
+            for symbol, market in exchange.markets.items():
+                try:
+                    if config["is_futures"](market):
+                        base = market['base']
+                        if base not in config["blacklist"]:
+                            futures_pairs[base].add((name, symbol))
+                except Exception as e:
+                    logger.warning(f"Ошибка обработки фьючерсной пары {symbol} на {name}: {e}")
 
-    # Находим общие пары
-    common_pairs = set(spot_pairs.keys()) & set(futures_pairs.keys())
+        # Находим общие пары
+        common_pairs = set(spot_pairs.keys()) & set(futures_pairs.keys())
 
-    if not common_pairs:
-        logger.error("Нет общих пар для спот-фьючерсного арбитража")
-        return
+        if not common_pairs:
+            logger.error("Нет общих пар для спот-фьючерсного арбитража")
+            await asyncio.sleep(SETTINGS['SPOT_FUTURES']['CHECK_INTERVAL'])
+            continue
 
-    logger.info(f"Найдено {len(common_pairs)} общих пар для анализа")
+        logger.info(f"Найдено {len(common_pairs)} общих пар для анализа")
 
-    while SETTINGS['SPOT_FUTURES']['ENABLED']:
         try:
             found_opportunities = 0
             for base in common_pairs:
                 try:
+                    # Дополнительная проверка на включенность арбитража
+                    if not SETTINGS['SPOT_FUTURES']['ENABLED']:
+                        break
+
                     spot_ticker_data = {}
                     futures_ticker_data = {}
 
                     # Получаем данные тикеров для спотовых бирж
                     for name, symbol in spot_pairs[base]:
                         try:
-                            data = await fetch_ticker_data(SPOT_EXCHANGES_LOADED[name]["api"], symbol)
+                            data = await fetch_ticker_data(spot_exchanges[name]["api"], symbol)
                             if data and data['price'] is not None:
                                 if data['volume'] is None or data['volume'] >= SETTINGS['SPOT_FUTURES'][
                                     'MIN_VOLUME_USD']:
@@ -1312,7 +1313,7 @@ async def check_spot_futures_arbitrage():
                     # Получаем данные тикеров для фьючерсных бирж
                     for name, symbol in futures_pairs[base]:
                         try:
-                            data = await fetch_ticker_data(FUTURES_EXCHANGES_LOADED[name]["api"], symbol)
+                            data = await fetch_ticker_data(futures_exchanges[name]["api"], symbol)
                             if data and data['price'] is not None:
                                 if data['volume'] is None or data['volume'] >= SETTINGS['SPOT_FUTURES'][
                                     'MIN_VOLUME_USD']:
@@ -1337,9 +1338,9 @@ async def check_spot_futures_arbitrage():
                         'MAX_THRESHOLD_PERCENT']:
                         # Проверяем доступность депозита и вывода для спота
                         deposit_available = await check_deposit_withdrawal_status(
-                            SPOT_EXCHANGES_LOADED[min_spot[0]]["api"], base, 'deposit')
+                            spot_exchanges[min_spot[0]]["api"], base, 'deposit')
                         withdrawal_available = await check_deposit_withdrawal_status(
-                            SPOT_EXCHANGES_LOADED[min_spot[0]]["api"], base, 'withdrawal')
+                            spot_exchanges[min_spot[0]]["api"], base, 'withdrawal')
 
                         if not (deposit_available and withdrawal_available):
                             logger.debug(f"Пропускаем {base}: депозит или вывод недоступен")
@@ -1436,11 +1437,11 @@ async def check_spot_futures_arbitrage():
                     logger.error(f"Ошибка обработки пары {base}: {e}")
 
             logger.info(f"Цикл спот-фьючерсного арбитража завершен. Найдено возможностей: {found_opportunities}")
-            await asyncio.sleep(SETTINGS['SPOT_FUTURES']['CHECK_INTERVAL'])
 
         except Exception as e:
             logger.error(f"Ошибка в основном цикле спот-фьючерсного арбитража: {e}")
-            await asyncio.sleep(60)
+
+        await asyncio.sleep(SETTINGS['SPOT_FUTURES']['CHECK_INTERVAL'])
 
 
 def format_price(price: float) -> str:
@@ -1448,15 +1449,12 @@ def format_price(price: float) -> str:
     if price is None:
         return "N/A"
 
-    # Для цен > 1000 используем запятые как разделители тысяч
     if price >= 1000:
         return f"${price:,.2f}"
 
-    # Для цен > 1 используем 4 знака после запятой
     if price >= 1:
         return f"${price:.4f}"
 
-    # Для цен < 1 используем 8 знаков после запятой
     return f"${price:.8f}"
 
 
@@ -1465,30 +1463,37 @@ def format_volume(vol: float) -> str:
     if vol is None:
         return "N/A"
 
-    # Для объемов > 1 миллиона
     if vol >= 1_000_000:
         return f"${vol / 1_000_000:,.1f}M"
 
-    # Для объемов > 1000
     if vol >= 1_000:
         return f"${vol / 1_000:,.1f}K"
 
-    # Для объемов < 1000
     return f"${vol:,.0f}"
 
 
 async def get_coin_prices(coin: str, market_type: str):
     """Получает цены монеты на всех биржах для указанного рынка"""
     coin = coin.upper()
-    exchanges = SPOT_EXCHANGES_LOADED if market_type == "spot" else FUTURES_EXCHANGES_LOADED
 
-    if not exchanges:
+    if market_type == "spot":
+        exchanges_config = SPOT_EXCHANGES
+        exchanges_loaded = SPOT_EXCHANGES_LOADED
+    else:
+        exchanges_config = FUTURES_EXCHANGES
+        exchanges_loaded = FUTURES_EXCHANGES_LOADED
+
+    if not exchanges_loaded:
         return "❌ Биржи еще не загружены. Попробуйте позже."
 
     results = []
     found_on = 0
 
-    for name, data in exchanges.items():
+    for name, data in exchanges_loaded.items():
+        # Проверяем, включена ли биржа в настройках
+        if not SETTINGS['EXCHANGES'][name]['ENABLED']:
+            continue
+
         exchange = data["api"]
         config = data["config"]
 
@@ -1625,9 +1630,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Если это не команда, предполагаем, что это название монеты
     if not text.startswith('/'):
-        # Проверяем, что введен допустимый символ (только буквы и цифры)
         if re.match(r'^[A-Z0-9]{1,15}$', text.upper()):
-            # Сохраняем монету в контексте и предлагаем выбрать тип рынка
             context.user_data['coin'] = text.upper()
             await update.message.reply_text(
                 f"🔍 Выберите тип рынка для <b><code>{text.upper()}</code></b>:",
@@ -1684,16 +1687,13 @@ async def handle_coin_selection(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return COIN_SELECTION
 
-    # Показываем "Загрузка..."
     await update.message.reply_text(
         f"⏳ Загружаем данные для <b><code>{coin}</code></b> на {'споте' if market_type == 'spot' else 'фьючерсах'}...",
         parse_mode="HTML"
     )
 
-    # Получаем данные
     response = await get_coin_prices(coin, market_type)
 
-    # Отправляем результаты
     await update.message.reply_text(
         text=response,
         parse_mode="HTML",
@@ -1780,7 +1780,6 @@ async def handle_spot_settings(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return SETTINGS_MENU
 
-    # Обработка изменения параметров
     if text.startswith("Порог:"):
         context.user_data['setting'] = ('SPOT', 'THRESHOLD_PERCENT')
         await update.message.reply_text(
@@ -1873,7 +1872,6 @@ async def handle_futures_settings(update: Update, context: ContextTypes.DEFAULT_
         )
         return SETTINGS_MENU
 
-    # Обработка изменения параметров
     if text.startswith("Порог:"):
         context.user_data['setting'] = ('FUTURES', 'THRESHOLD_PERCENT')
         await update.message.reply_text(
@@ -1952,7 +1950,6 @@ async def handle_spot_futures_settings(update: Update, context: ContextTypes.DEF
         )
         return SETTINGS_MENU
 
-    # Обработка изменения параметров
     if text.startswith("Порог:"):
         context.user_data['setting'] = ('SPOT_FUTURES', 'THRESHOLD_PERCENT')
         await update.message.reply_text(
@@ -2031,7 +2028,6 @@ async def handle_exchange_settings(update: Update, context: ContextTypes.DEFAULT
         )
         return SETTINGS_MENU
 
-    # Обработка включения/выключения бирж
     for exchange in SETTINGS['EXCHANGES'].keys():
         if text.startswith(exchange):
             SETTINGS['EXCHANGES'][exchange]['ENABLED'] = not SETTINGS['EXCHANGES'][exchange]['ENABLED']
@@ -2057,22 +2053,18 @@ async def handle_setting_value(update: Update, context: ContextTypes.DEFAULT_TYP
         category, setting = context.user_data['setting']
 
         if setting in ['THRESHOLD_PERCENT', 'MAX_THRESHOLD_PERCENT', 'MAX_IMPACT_PERCENT']:
-            # Процентные значения
             if new_value <= 0 or new_value > 100:
                 await update.message.reply_text("❌ Значение должно быть между 0 и 100. Попробуйте снова:")
                 return SETTING_VALUE
         elif setting in ['MIN_VOLUME_USD', 'MIN_ENTRY_AMOUNT_USDT', 'MAX_ENTRY_AMOUNT_USDT', 'MIN_NET_PROFIT_USD']:
-            # Денежные значения
             if new_value <= 0:
                 await update.message.reply_text("❌ Значение должно быть положительным. Попробуйте снова:")
                 return SETTING_VALUE
         elif setting == 'CHECK_INTERVAL':
-            # Интервал в секундах
             if new_value < 5 or new_value > 3600:
                 await update.message.reply_text("❌ Интервал должен быть между 5 и 3600 секунд. Попробуйте снова:")
                 return SETTING_VALUE
         elif setting == 'ORDER_BOOK_DEPTH':
-            # Глубина стакана
             if new_value < 1 or new_value > 50:
                 await update.message.reply_text("❌ Глубина стакана должна быть между 1 и 50. Попробуйте снова:")
                 return SETTING_VALUE
@@ -2117,7 +2109,6 @@ async def start_bot():
     """Запуск Telegram бота с обработчиками команд"""
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Добавляем обработчики
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)],
         states={
@@ -2135,7 +2126,6 @@ async def start_bot():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
 
-    # Инициализация и запуск
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
@@ -2143,27 +2133,27 @@ async def start_bot():
 
 
 async def main():
-    global SHARED_BOT
+    global SHARED_BOT, SPOT_TASK, FUTURES_TASK, SPOT_FUTURES_TASK
     SHARED_BOT = Bot(token=TELEGRAM_TOKEN)
 
     logger.info("Запуск объединенного арбитражного бота")
     try:
-        # Запускаем телеграм-бот
         app = await start_bot()
 
-        # Запускаем арбитражные задачи параллельно
-        spot_task = asyncio.create_task(check_spot_arbitrage())
-        futures_task = asyncio.create_task(check_futures_arbitrage())
-        spot_futures_task = asyncio.create_task(check_spot_futures_arbitrage())
+        # Запускаем арбитражные задачи
+        SPOT_TASK = asyncio.create_task(check_spot_arbitrage())
+        FUTURES_TASK = asyncio.create_task(check_futures_arbitrage())
+        SPOT_FUTURES_TASK = asyncio.create_task(check_spot_futures_arbitrage())
 
-        # Отправляем сообщение о запуске
         await send_telegram_message("🤖 <b>Бот успешно запущен!</b>\n\n"
-                                  "🚀 Спотовый арбитраж: " + ("✅ ВКЛ" if SETTINGS['SPOT']['ENABLED'] else "❌ ВЫКЛ") + "\n"
-                                  "📊 Фьючерсный арбитраж: " + ("✅ ВКЛ" if SETTINGS['FUTURES']['ENABLED'] else "❌ ВЫКЛ") + "\n"
-                                  "↔️ Спот-Фьючерсный арбитраж: " + ("✅ ВКЛ" if SETTINGS['SPOT_FUTURES']['ENABLED'] else "❌ ВЫКЛ") + "\n\n"
-                                  "Используйте /start для просмотра меню")
+                                    "🚀 Спотовый арбитраж: " + (
+                                        "✅ ВКЛ" if SETTINGS['SPOT']['ENABLED'] else "❌ ВЫКЛ") + "\n"
+                                                                                                "📊 Фьючерсный арбитраж: " + (
+                                        "✅ ВКЛ" if SETTINGS['FUTURES']['ENABLED'] else "❌ ВЫКЛ") + "\n"
+                                                                                                   "↔️ Спот-Фьючерсный арбитраж: " + (
+                                        "✅ ВКЛ" if SETTINGS['SPOT_FUTURES']['ENABLED'] else "❌ ВЫКЛ") + "\n\n"
+                                                                                                        "Используйте /start для просмотра меню")
 
-        # Бесконечное ожидание
         while True:
             await asyncio.sleep(3600)
 
@@ -2175,9 +2165,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Настройка логирования
     logging.getLogger("CryptoArbBot").setLevel(logging.DEBUG)
     logging.getLogger("ccxt").setLevel(logging.INFO)
 
-    # Запуск асинхронного приложения
     asyncio.run(main())
