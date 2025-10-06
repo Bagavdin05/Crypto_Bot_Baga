@@ -137,7 +137,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://www.bybit.com/trade/spot/{s.replace('/', '')}",
         "withdraw_url": lambda c: f"https://www.bybit.com/user/assets/withdraw",
         "deposit_url": lambda c: f"https://www.bybit.com/user/assets/deposit",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "mexc": {
         "api": ccxt.mexc({"enableRateLimit": True}),
@@ -148,7 +149,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://www.mexc.com/exchange/{s.replace('/', '_')}",
         "withdraw_url": lambda c: f"https://www.mexc.com/ru-RU/assets/withdraw/{c}",
         "deposit_url": lambda c: f"https://www.mexc.com/ru-RU/assets/deposit/{c}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "okx": {
         "api": ccxt.okx({"enableRateLimit": True}),
@@ -159,7 +161,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://www.okx.com/trade-spot/{s.replace('/', '-').lower()}",
         "withdraw_url": lambda c: f"https://www.okx.com/ru/balance/withdrawal/{c.lower()}-chain",
         "deposit_url": lambda c: f"https://www.okx.com/ru/balance/recharge/{c.lower()}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": ["BTC"]  # Черный список для OKX спот
     },
     "gate": {
         "api": ccxt.gateio({"enableRateLimit": True}),
@@ -170,7 +173,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://www.gate.io/trade/{s.replace('/', '_')}",
         "withdraw_url": lambda c: f"https://www.gate.io/myaccount/withdraw/{c}",
         "deposit_url": lambda c: f"https://www.gate.io/myaccount/deposit/{c}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "bitget": {
         "api": ccxt.bitget({"enableRateLimit": True}),
@@ -181,7 +185,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://www.bitget.com/spot/{s.replace('/', '')}_SPBL",
         "withdraw_url": lambda c: f"https://www.bitget.com/ru/asset/withdraw?coinId={c}",
         "deposit_url": lambda c: f"https://www.bitget.com/ru/asset/recharge?coinId={c}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "kucoin": {
         "api": ccxt.kucoin({"enableRateLimit": True}),
@@ -192,7 +197,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://www.kucoin.com/trade/{s.replace('/', '-')}",
         "withdraw_url": lambda c: f"https://www.kucoin.com/ru/assets/withdraw/{c}",
         "deposit_url": lambda c: f"https://www.kucoin.com/ru/assets/coin/{c}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "htx": {
         "api": ccxt.htx({"enableRateLimit": True}),
@@ -203,7 +209,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://www.htx.com/trade/{s.replace('/', '_').lower()}",
         "withdraw_url": lambda c: f"https://www.htx.com/ru-ru/finance/withdraw/{c.lower()}",
         "deposit_url": lambda c: f"https://www.htx.com/ru-ru/finance/deposit/{c.lower()}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "bingx": {
         "api": ccxt.bingx({"enableRateLimit": True}),
@@ -214,7 +221,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://bingx.com/en-us/spot/{s.replace('/', '')}",
         "withdraw_url": lambda c: f"https://bingx.com/en-us/assets/withdraw/{c}",
         "deposit_url": lambda c: f"https://bingx.com/en-us/assets/deposit/{c}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "phemex": {
         "api": ccxt.phemex({"enableRateLimit": True}),
@@ -225,7 +233,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://phemex.com/spot/trade/{s.replace('/', '')}",
         "withdraw_url": lambda c: f"https://phemex.com/assets/withdraw?asset={c}",
         "deposit_url": lambda c: f"https://phemex.com/assets/deposit?asset={c}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "coinex": {
         "api": ccxt.coinex({"enableRateLimit": True}),
@@ -236,7 +245,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://www.coinex.com/exchange/{s.replace('/', '-')}",
         "withdraw_url": lambda c: f"https://www.coinex.com/asset/withdraw/{c}",
         "deposit_url": lambda c: f"https://www.coinex.com/asset/deposit/{c}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "xt": {
         "api": ccxt.xt({"enableRateLimit": True}),
@@ -247,7 +257,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://www.xt.com/trade/{s.replace('/', '_')}",
         "withdraw_url": lambda c: f"https://www.xt.com/asset/withdraw/{c}",
         "deposit_url": lambda c: f"https://www.xt.com/asset/deposit/{c}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "ascendex": {
         "api": ccxt.ascendex({"enableRateLimit": True}),
@@ -258,7 +269,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://ascendex.com/en/cashtrade-spot/{s.replace('/', '-')}",
         "withdraw_url": lambda c: f"https://ascendex.com/en/asset/withdraw/{c}",
         "deposit_url": lambda c: f"https://ascendex.com/en/asset/deposit/{c}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "bitrue": {
         "api": ccxt.bitrue({"enableRateLimit": True}),
@@ -269,7 +281,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://www.bitrue.com/trade/{s.replace('/', '_')}",
         "withdraw_url": lambda c: f"https://www.bitrue.com/asset/withdraw/{c}",
         "deposit_url": lambda c: f"https://www.bitrue.com/asset/deposit/{c}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     },
     "blofin": {
         "api": ccxt.blofin({
@@ -285,7 +298,8 @@ SPOT_EXCHANGES = {
         "url_format": lambda s: f"https://www.blofin.com/spot/{s.replace('/', '-')}",
         "withdraw_url": lambda c: f"https://www.blofin.com/assets/withdraw/{c}",
         "deposit_url": lambda c: f"https://www.blofin.com/assets/deposit/{c}",
-        "emoji": "🏛"
+        "emoji": "🏛",
+        "blacklist": []
     }
 }
 
@@ -318,7 +332,7 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0005,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.okx.com/trade-swap/{s.replace('/', '-').replace(':USDT', '').lower()}",
-        "blacklist": [],
+        "blacklist": ["BTC"],  # Черный список для OKX фьючерсы
         "emoji": "📊"
     },
     "gate": {
@@ -786,6 +800,9 @@ async def check_spot_arbitrage():
             try:
                 if config["is_spot"](market):
                     base = market['base']
+                    # Пропускаем монеты из черного списка
+                    if base in config.get("blacklist", []):
+                        continue
                     all_pairs[base].add((name, symbol))
             except Exception as e:
                 logger.warning(
@@ -1052,8 +1069,10 @@ async def check_futures_arbitrage():
             try:
                 if config["is_futures"](market):
                     base = market['base']
-                    if base not in config["blacklist"]:
-                        all_pairs[base].add((name, symbol))
+                    # Пропускаем монеты из черного списка
+                    if base in config.get("blacklist", []):
+                        continue
+                    all_pairs[base].add((name, symbol))
             except Exception as e:
                 logger.warning(f"Ошибка обработки пары {symbol} на {name}: {e}")
 
@@ -1264,6 +1283,9 @@ async def check_spot_futures_arbitrage():
             try:
                 if config["is_spot"](market):
                     base = market['base']
+                    # Пропускаем монеты из черного списка
+                    if base in config.get("blacklist", []):
+                        continue
                     spot_pairs[base].add((name, symbol))
             except Exception as e:
                 logger.warning(f"Ошибка обработки спотовой пары {symbol} на {name}: {e}")
@@ -1276,8 +1298,10 @@ async def check_spot_futures_arbitrage():
             try:
                 if config["is_futures"](market):
                     base = market['base']
-                    if base not in config["blacklist"]:
-                        futures_pairs[base].add((name, symbol))
+                    # Пропускаем монеты из черного списка
+                    if base in config.get("blacklist", []):
+                        continue
+                    futures_pairs[base].add((name, symbol))
             except Exception as e:
                 logger.warning(f"Ошибка обработки фьючерсной пары {symbol} на {name}: {e}")
 
