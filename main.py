@@ -30,7 +30,7 @@ DEFAULT_SPOT_SETTINGS = {
     "MIN_EXCHANGES_FOR_PAIR": 2,
     "MIN_VOLUME_USD": 1000000,
     "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 350,
+    "MAX_ENTRY_AMOUNT_USDT": 500,
     "MAX_IMPACT_PERCENT": 0.5,
     "ORDER_BOOK_DEPTH": 10,
     "MIN_NET_PROFIT_USD": 6,
@@ -45,7 +45,7 @@ DEFAULT_FUTURES_SETTINGS = {
     "MIN_VOLUME_USD": 1000000,
     "MIN_EXCHANGES_FOR_PAIR": 2,
     "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 170,
+    "MAX_ENTRY_AMOUNT_USDT": 250,
     "MIN_NET_PROFIT_USD": 5,
     "ENABLED": True
 }
@@ -58,7 +58,7 @@ DEFAULT_SPOT_FUTURES_SETTINGS = {
     "MIN_VOLUME_USD": 1000000,
     "MIN_EXCHANGES_FOR_PAIR": 2,
     "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 170,
+    "MAX_ENTRY_AMOUNT_USDT": 250,
     "MIN_NET_PROFIT_USD": 5,
     "ENABLED": True
 }
@@ -75,8 +75,6 @@ EXCHANGE_SETTINGS = {
     "bingx": {"ENABLED": True},
     "phemex": {"ENABLED": True},
     "coinex": {"ENABLED": True},
-    "xt": {"ENABLED": True},
-    "ascendex": {"ENABLED": True},
     "bitrue": {"ENABLED": True},
     "blofin": {"ENABLED": True}
 }
@@ -248,30 +246,6 @@ SPOT_EXCHANGES = {
         "emoji": "🏛",
         "blacklist": []
     },
-    "xt": {
-        "api": ccxt.xt({"enableRateLimit": True}),
-        "symbol_format": lambda s: f"{s}/USDT",
-        "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
-        "taker_fee": 0.002,
-        "maker_fee": 0.002,
-        "url_format": lambda s: f"https://www.xt.com/trade/{s.replace('/', '_')}",
-        "withdraw_url": lambda c: f"https://www.xt.com/asset/withdraw/{c}",
-        "deposit_url": lambda c: f"https://www.xt.com/asset/deposit/{c}",
-        "emoji": "🏛",
-        "blacklist": []
-    },
-    "ascendex": {
-        "api": ccxt.ascendex({"enableRateLimit": True}),
-        "symbol_format": lambda s: f"{s}/USDT",
-        "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
-        "taker_fee": 0.001,
-        "maker_fee": 0.001,
-        "url_format": lambda s: f"https://ascendex.com/en/cashtrade-spot/{s.replace('/', '-')}",
-        "withdraw_url": lambda c: f"https://ascendex.com/en/asset/withdraw/{c}",
-        "deposit_url": lambda c: f"https://ascendex.com/en/asset/deposit/{c}",
-        "emoji": "🏛",
-        "blacklist": []
-    },
     "bitrue": {
         "api": ccxt.bitrue({"enableRateLimit": True}),
         "symbol_format": lambda s: f"{s}/USDT",
@@ -292,7 +266,10 @@ SPOT_EXCHANGES = {
             }
         }),
         "symbol_format": lambda s: f"{s}/USDT",
-        "is_spot": lambda m: m.get('type') == 'spot' and m['quote'] == 'USDT',
+        "is_spot": lambda m: (
+            m.get('type') == 'spot' and
+            m['quote'] == 'USDT'
+        ),
         "taker_fee": 0.001,
         "maker_fee": 0.001,
         "url_format": lambda s: f"https://www.blofin.com/spot/{s.replace('/', '-')}",
@@ -332,7 +309,7 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0005,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.okx.com/trade-swap/{s.replace('/', '-').replace(':USDT', '').lower()}",
-        "blacklist": ["BTC"],  # Черный список для OKX фьючерсы
+        "blacklist": ["BTC"],
         "emoji": "📊"
     },
     "gate": {
@@ -416,35 +393,6 @@ FUTURES_EXCHANGES = {
         "blacklist": [],
         "emoji": "📊"
     },
-    "xt": {
-        "api": ccxt.xt({"enableRateLimit": True}),
-        "symbol_format": lambda s: f"{s}/USDT:USDT",
-        "is_futures": lambda m: (m.get('swap', False) or m.get('future', False)) and m['settle'] == 'USDT',
-        "taker_fee": 0.002,
-        "maker_fee": 0.002,
-        "url_format": lambda s: f"https://www.xt.com/futures/{s.replace('/', '_').replace(':USDT', '')}",
-        "blacklist": [],
-        "emoji": "📊"
-    },
-    "ascendex": {
-        "api": ccxt.ascendex({
-            "enableRateLimit": True,
-            "options": {
-                "defaultType": "swap",  # Явно указываем тип по умолчанию
-            }
-        }),
-        "symbol_format": lambda s: f"{s}/USDT:USDT",
-        "is_futures": lambda m: (
-                m.get('type') in ['swap', 'future'] and
-                m.get('settle') == 'USDT' and
-                m.get('linear', False)  # Убедимся что это линейный контракт
-        ),
-        "taker_fee": 0.0006,  # Обновленная комиссия
-        "maker_fee": 0.0002,
-        "url_format": lambda s: f"https://ascendex.com/en/futures/{s.replace('/', '-').replace(':USDT', '')}",
-        "blacklist": [],
-        "emoji": "📊"
-    },
     "bitrue": {
         "api": ccxt.bitrue({"enableRateLimit": True}),
         "symbol_format": lambda s: f"{s}/USDT:USDT",
@@ -463,7 +411,11 @@ FUTURES_EXCHANGES = {
             }
         }),
         "symbol_format": lambda s: f"{s}/USDT:USDT",
-        "is_futures": lambda m: (m.get('swap', False) or m.get('future', False)) and m['settle'] == 'USDT',
+        "is_futures": lambda m: (
+            m.get('type') in ['swap', 'future'] and
+            m.get('settle') == 'USDT' and
+            m.get('linear', False)
+        ),
         "taker_fee": 0.0006,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.blofin.com/futures/{s.replace('/', '-').replace(':USDT', '')}",
@@ -584,21 +536,9 @@ def load_markets_sync(exchange):
 
 async def fetch_ticker_data(exchange, symbol: str):
     try:
-        # Для AscendEX используем альтернативный метод если основной не работает
-        if exchange.id == "ascendex":
-            try:
-                # Пробуем альтернативный метод получения данных
-                ticker = await asyncio.get_event_loop().run_in_executor(
-                    None, exchange.fetch_ticker, symbol.replace(':USDT', '-USDT')
-                )
-            except:
-                ticker = await asyncio.get_event_loop().run_in_executor(
-                    None, exchange.fetch_ticker, symbol
-                )
-        else:
-            ticker = await asyncio.get_event_loop().run_in_executor(
-                None, exchange.fetch_ticker, symbol
-            )
+        ticker = await asyncio.get_event_loop().run_in_executor(
+            None, exchange.fetch_ticker, symbol
+        )
 
         if ticker:
             price = float(ticker['last']) if ticker.get('last') else None
