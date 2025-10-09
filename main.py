@@ -1507,8 +1507,8 @@ async def get_coin_prices(coin: str, market_type: str):
             # Сделаем название биржи кликабельной ссылкой
             response += (
                 f"{item['emoji']} <a href='{item['url']}'><b>{item['name']}</b></a>\n"
-                f"▫️ Цена: {format_price(item['price'])}\n"
-                f"▫️ Объем: {format_volume(item['volume'])}\n"
+                f"▫️ Цена: {format_price<b>(item['price'])</b>}\n"
+                f"▫️ Объем: {format_volume<b>(item['volume'])</b>}\n"
             )
 
             # Добавляем разделитель, если это не последний элемент
