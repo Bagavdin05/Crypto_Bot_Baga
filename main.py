@@ -1431,14 +1431,14 @@ def format_volume(vol: float) -> str:
 
     # Для объемов > 1 миллиона
     if vol >= 1_000_000:
-        return f"${vol / 1_000_000:,.1f}M"
+        return f"${vol / 1_000_000:.1f}M"
 
     # Для объемов > 1000
     if vol >= 1_000:
-        return f"${vol / 1_000:,.1f}K"
+        return f"${vol / 1_000:.1f}K"
 
     # Для объемов < 1000
-    return f"${vol:,.0f}"
+    return f"${vol:.0f}"
 
 
 async def get_coin_prices(coin: str, market_type: str):
