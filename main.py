@@ -1421,7 +1421,7 @@ def format_price(price: float) -> str:
         return f"$<code>{price:.4f}</code>"
 
     # Для цен < 1 используем 8 знаков после запятой
-    return f"${price:.8f}"
+    return f"$<code>{price:.8f}</code>"
 
 
 def format_volume(vol: float) -> str:
