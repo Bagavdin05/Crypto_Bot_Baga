@@ -1414,11 +1414,11 @@ def format_price(price: float) -> str:
 
     # Для цен > 1000 используем запятые как разделители тысяч
     if price >= 1000:
-        return f"${price:,.2f}"
+        return f"$<code>{price:.2f}</code>"
 
     # Для цен > 1 используем 4 знака после запятой
     if price >= 1:
-        return f"${price:.4f}"
+        return f"$<code>{price:.4f}</code>"
 
     # Для цен < 1 используем 8 знаков после запятой
     return f"${price:.8f}"
@@ -1507,8 +1507,8 @@ async def get_coin_prices(coin: str, market_type: str):
             # Сделаем название биржи кликабельной ссылкой
             response += (
                 f"{item['emoji']} <a href='{item['url']}'><b>{item['name']}</b></a>\n"
-                f"▫️ Цена: {format_price<b>(item['price'])</b>}\n"
-                f"▫️ Объем: {format_volume<b>(item['volume'])</b>}\n"
+                f"▫️ Цена: {format_price(item['price'])}\n"
+                f"▫️ Объем: {format_volume(item['volume'])}\n"
             )
 
             # Добавляем разделитель, если это не последний элемент
