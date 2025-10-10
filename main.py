@@ -569,7 +569,7 @@ def add_opportunity_to_sent(arb_type: str, base: str, exchange1: str, exchange2:
 async def send_price_convergence_notification(arb_type: str, base: str, exchange1: str, exchange2: str,
                                               price1: float, price2: float, spread: float, volume1: float = None,
                                               volume2: float = None, duration: float = None):
-    """Отправляет уведомление о сравнении цен с длительностью арбитража"""
+    """Отправляет уведомление о сравнении цен с длительностью арбитража и удаляет связку из актуальных"""
 
     if not SETTINGS[arb_type]['PRICE_CONVERGENCE_ENABLED']:
         return
@@ -667,6 +667,19 @@ async def send_price_convergence_notification(arb_type: str, base: str, exchange
     await send_telegram_message(message)
     logger.info(
         f"Отправлено уведомление о сходимости цен для {base} ({arb_type}): {spread:.4f}%, длительность: {duration_str}")
+
+    # Удаляем связку из всех словарей, чтобы она не отображалась в актуальных
+    key = f"{arb_type}_{base}_{exchange1}_{exchange2}"
+    if key in sent_arbitrage_opportunities:
+        del sent_arbitrage_opportunities[key]
+    if key in current_arbitrage_opportunities:
+        del current_arbitrage_opportunities[key]
+    if key in arbitrage_start_times:
+        del arbitrage_start_times[key]
+    if key in previous_arbitrage_opportunities:
+        del previous_arbitrage_opportunities[key]
+
+    logger.info(f"Связка удалена из актуальных после сходимости цен: {key}")
 
 
 def update_arbitrage_duration(arb_type: str, base: str, exchange1: str, exchange2: str, spread: float):
@@ -2613,4 +2626,4 @@ if __name__ == "__main__":
     logging.getLogger("ccxt").setLevel(logging.INFO)
 
     # Запуск асинхронного приложения
-    asyncio.run(main())
+    asyncio.run(main()) 
