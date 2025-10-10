@@ -17,6 +17,7 @@ import html
 import re
 import json
 import os
+import time
 
 # Общая конфигурация
 TELEGRAM_TOKEN = "8357883688:AAG5E-IwqpbTn7hJ_320wpvKQpNfkm_QQeo"
@@ -34,7 +35,9 @@ DEFAULT_SPOT_SETTINGS = {
     "MAX_IMPACT_PERCENT": 0.5,
     "ORDER_BOOK_DEPTH": 10,
     "MIN_NET_PROFIT_USD": 6,
-    "ENABLED": True
+    "ENABLED": True,
+    "PRICE_CONVERGENCE_THRESHOLD": 0.5,
+    "PRICE_CONVERGENCE_ENABLED": True
 }
 
 # Конфигурация фьючерсного арбитража (по умолчанию)
@@ -47,7 +50,9 @@ DEFAULT_FUTURES_SETTINGS = {
     "MIN_ENTRY_AMOUNT_USDT": 5,
     "MAX_ENTRY_AMOUNT_USDT": 250,
     "MIN_NET_PROFIT_USD": 5,
-    "ENABLED": True
+    "ENABLED": True,
+    "PRICE_CONVERGENCE_THRESHOLD": 0.5,
+    "PRICE_CONVERGENCE_ENABLED": True
 }
 
 # Конфигурация спот-фьючерсного арбитража (по умолчанию)
@@ -60,7 +65,9 @@ DEFAULT_SPOT_FUTURES_SETTINGS = {
     "MIN_ENTRY_AMOUNT_USDT": 5,
     "MAX_ENTRY_AMOUNT_USDT": 250,
     "MIN_NET_PROFIT_USD": 5,
-    "ENABLED": True
+    "ENABLED": True,
+    "PRICE_CONVERGENCE_THRESHOLD": 0.5,
+    "PRICE_CONVERGENCE_ENABLED": True
 }
 
 # Настройки бирж
@@ -75,7 +82,6 @@ EXCHANGE_SETTINGS = {
     "bingx": {"ENABLED": True},
     "phemex": {"ENABLED": True},
     "coinex": {"ENABLED": True},
-    "bitrue": {"ENABLED": True},
     "blofin": {"ENABLED": True}
 }
 
@@ -89,6 +95,14 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger("CryptoArbBot")
+
+# Глобальные переменные для отслеживания истории уведомлений и длительности арбитража
+price_convergence_history = defaultdict(dict)
+last_convergence_notification = defaultdict(dict)
+arbitrage_start_times = defaultdict(dict)  # Для отслеживания времени начала арбитражных возможностей
+current_arbitrage_opportunities = defaultdict(dict)  # Для хранения текущих арбитражных возможностей
+previous_arbitrage_opportunities = defaultdict(dict)  # Для хранения предыдущих арбитражных возможностей
+sent_arbitrage_opportunities = defaultdict(dict)  # Для хранения отправленных в Telegram арбитражных возможностей
 
 
 # Загрузка сохраненных настроек
@@ -160,7 +174,7 @@ SPOT_EXCHANGES = {
         "withdraw_url": lambda c: f"https://www.okx.com/ru/balance/withdrawal/{c.lower()}-chain",
         "deposit_url": lambda c: f"https://www.okx.com/ru/balance/recharge/{c.lower()}",
         "emoji": "🏛",
-        "blacklist": ["BTC"]  # Черный список для OKX спот
+        "blacklist": ["BTC"]
     },
     "gate": {
         "api": ccxt.gateio({"enableRateLimit": True}),
@@ -246,18 +260,6 @@ SPOT_EXCHANGES = {
         "emoji": "🏛",
         "blacklist": []
     },
-    "bitrue": {
-        "api": ccxt.bitrue({"enableRateLimit": True}),
-        "symbol_format": lambda s: f"{s}/USDT",
-        "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
-        "taker_fee": 0.001,
-        "maker_fee": 0.001,
-        "url_format": lambda s: f"https://www.bitrue.com/trade/{s.replace('/', '_')}",
-        "withdraw_url": lambda c: f"https://www.bitrue.com/asset/withdraw/{c}",
-        "deposit_url": lambda c: f"https://www.bitrue.com/asset/deposit/{c}",
-        "emoji": "🏛",
-        "blacklist": []
-    },
     "blofin": {
         "api": ccxt.blofin({
             "enableRateLimit": True,
@@ -267,8 +269,8 @@ SPOT_EXCHANGES = {
         }),
         "symbol_format": lambda s: f"{s}/USDT",
         "is_spot": lambda m: (
-            m.get('type') == 'spot' and
-            m['quote'] == 'USDT'
+                m.get('type') == 'spot' and
+                m['quote'] == 'USDT'
         ),
         "taker_fee": 0.001,
         "maker_fee": 0.001,
@@ -393,16 +395,6 @@ FUTURES_EXCHANGES = {
         "blacklist": [],
         "emoji": "📊"
     },
-    "bitrue": {
-        "api": ccxt.bitrue({"enableRateLimit": True}),
-        "symbol_format": lambda s: f"{s}/USDT:USDT",
-        "is_futures": lambda m: (m.get('swap', False) or m.get('future', False)) and m['settle'] == 'USDT',
-        "taker_fee": 0.001,
-        "maker_fee": 0.001,
-        "url_format": lambda s: f"https://www.bitrue.com/futures/{s.replace('/', '_').replace(':USDT', '')}",
-        "blacklist": [],
-        "emoji": "📊"
-    },
     "blofin": {
         "api": ccxt.blofin({
             "enableRateLimit": True,
@@ -412,9 +404,9 @@ FUTURES_EXCHANGES = {
         }),
         "symbol_format": lambda s: f"{s}/USDT:USDT",
         "is_futures": lambda m: (
-            m.get('type') in ['swap', 'future'] and
-            m.get('settle') == 'USDT' and
-            m.get('linear', False)
+                m.get('type') in ['swap', 'future'] and
+                m.get('settle') == 'USDT' and
+                m.get('linear', False)
         ),
         "taker_fee": 0.0006,
         "maker_fee": 0.0002,
@@ -428,7 +420,7 @@ FUTURES_EXCHANGES = {
 # Reply-клавиатуры
 def get_main_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("🔧 Настройки")],
+        [KeyboardButton("📈 Актуальные связки")], [KeyboardButton("🔧 Настройки")],
         [KeyboardButton("📊 Статус бота"), KeyboardButton("ℹ️ Помощь")]
     ], resize_keyboard=True)
 
@@ -454,6 +446,8 @@ def get_spot_settings_keyboard():
          KeyboardButton(f"Стакан: {spot['ORDER_BOOK_DEPTH']}")],
         [KeyboardButton(f"Прибыль: ${spot['MIN_NET_PROFIT_USD']}"),
          KeyboardButton(f"Статус: {'ВКЛ' if spot['ENABLED'] else 'ВЫКЛ'}")],
+        [KeyboardButton(f"Сходимость: {spot['PRICE_CONVERGENCE_THRESHOLD']}%"),
+         KeyboardButton(f"Увед. сравн.: {'🔔' if spot['PRICE_CONVERGENCE_ENABLED'] else '🔕'}")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
@@ -469,6 +463,8 @@ def get_futures_settings_keyboard():
          KeyboardButton(f"Макс. сумма: ${futures['MAX_ENTRY_AMOUNT_USDT']}")],
         [KeyboardButton(f"Прибыль: ${futures['MIN_NET_PROFIT_USD']}"),
          KeyboardButton(f"Статус: {'ВКЛ' if futures['ENABLED'] else 'ВЫКЛ'}")],
+        [KeyboardButton(f"Сходимость: {futures['PRICE_CONVERGENCE_THRESHOLD']}%"),
+         KeyboardButton(f"Увед. сравн.: {'🔔' if futures['PRICE_CONVERGENCE_ENABLED'] else '🔕'}")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
@@ -484,6 +480,8 @@ def get_spot_futures_settings_keyboard():
          KeyboardButton(f"Макс. сумма: ${spot_futures['MAX_ENTRY_AMOUNT_USDT']}")],
         [KeyboardButton(f"Прибыль: ${spot_futures['MIN_NET_PROFIT_USD']}"),
          KeyboardButton(f"Статус: {'ВКЛ' if spot_futures['ENABLED'] else 'ВЫКЛ'}")],
+        [KeyboardButton(f"Сходимость: {spot_futures['PRICE_CONVERGENCE_THRESHOLD']}%"),
+         KeyboardButton(f"Увед. сравн.: {'🔔' if spot_futures['PRICE_CONVERGENCE_ENABLED'] else '🔕'}")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
@@ -522,6 +520,313 @@ async def send_telegram_message(message: str, chat_id: str = None, reply_markup:
             logger.info(f"Сообщение отправлено в чат {target_id}")
         except TelegramError as e:
             logger.error(f"Ошибка отправки в {target_id}: {e}")
+
+
+def format_duration(seconds):
+    """Форматирует длительность в читаемый вид"""
+    if seconds < 60:
+        return f"{int(seconds)} сек"
+    elif seconds < 3600:
+        minutes = int(seconds // 60)
+        seconds_remaining = int(seconds % 60)
+        return f"{minutes} мин {seconds_remaining} сек"
+    else:
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        return f"{hours} ч {minutes} мин"
+
+
+def add_opportunity_to_sent(arb_type: str, base: str, exchange1: str, exchange2: str, spread: float,
+                            price1: float, price2: float, volume1: float = None, volume2: float = None):
+    """Добавляет связку в отправленные возможности"""
+    key = f"{arb_type}_{base}_{exchange1}_{exchange2}"
+    current_time = time.time()
+
+    sent_arbitrage_opportunities[key] = {
+        'arb_type': arb_type,
+        'base': base,
+        'exchange1': exchange1,
+        'exchange2': exchange2,
+        'spread': spread,
+        'price1': price1,
+        'price2': price2,
+        'volume1': volume1,
+        'volume2': volume2,
+        'start_time': current_time,
+        'last_updated': current_time
+    }
+
+    # Также добавляем в current_arbitrage_opportunities для отображения в актуальных связках
+    current_arbitrage_opportunities[key] = sent_arbitrage_opportunities[key].copy()
+
+    # Запускаем отсчет времени для этой связки
+    arbitrage_start_times[key] = current_time
+    previous_arbitrage_opportunities[key] = True
+
+    logger.info(f"Связка добавлена в отправленные: {key}")
+
+
+async def send_price_convergence_notification(arb_type: str, base: str, exchange1: str, exchange2: str,
+                                              price1: float, price2: float, spread: float, volume1: float = None,
+                                              volume2: float = None, duration: float = None):
+    """Отправляет уведомление о сравнении цен с длительностью арбитража"""
+
+    if not SETTINGS[arb_type]['PRICE_CONVERGENCE_ENABLED']:
+        return
+
+    convergence_threshold = SETTINGS[arb_type]['PRICE_CONVERGENCE_THRESHOLD']
+
+    if abs(spread) > convergence_threshold:
+        return
+
+    # Проверяем, была ли эта связка ранее отправленной арбитражной возможностью
+    previous_key = f"{arb_type}_{base}_{exchange1}_{exchange2}"
+    if previous_key not in sent_arbitrage_opportunities:
+        return
+
+    # Проверяем, не отправляли ли мы уже уведомление для этой связки
+    current_time = time.time()
+    notification_key = f"{arb_type}_{base}_{exchange1}_{exchange2}"
+
+    # Проверяем, прошло ли достаточно времени с последнего уведомления (5 минут)
+    if (notification_key in last_convergence_notification and
+            current_time - last_convergence_notification[notification_key] < 300):
+        return
+
+    # Обновляем время последнего уведомления
+    last_convergence_notification[notification_key] = current_time
+
+    # Определяем тип арбитража для заголовка
+    if arb_type == 'SPOT':
+        arb_type_name = "Спотовый"
+        emoji = "🚀"
+    elif arb_type == 'FUTURES':
+        arb_type_name = "Фьючерсный"
+        emoji = "📊"
+    else:
+        arb_type_name = "Спот-Фьючерсный"
+        emoji = "↔️"
+
+    utc_plus_3 = timezone(timedelta(hours=3))
+    current_time_str = datetime.now(utc_plus_3).strftime('%H:%M:%S')
+
+    # Форматируем объемы
+    def format_volume(vol):
+        if vol is None:
+            return "N/A"
+        if vol >= 1_000_000:
+            return f"${vol / 1_000_000:.1f}M"
+        if vol >= 1_000:
+            return f"${vol / 1_000:.1f}K"
+        return f"${vol:.1f}"
+
+    volume1_str = format_volume(volume1)
+    volume2_str = format_volume(volume2)
+
+    # Форматируем длительность
+    duration_str = format_duration(duration) if duration is not None else "N/A"
+
+    # Получаем URL для бирж
+    if arb_type == 'SPOT':
+        exchange1_config = SPOT_EXCHANGES[exchange1]
+        exchange2_config = SPOT_EXCHANGES[exchange2]
+        symbol1 = exchange1_config["symbol_format"](base)
+        symbol2 = exchange2_config["symbol_format"](base)
+        url1 = exchange1_config["url_format"](symbol1)
+        url2 = exchange2_config["url_format"](symbol2)
+    else:
+        exchange1_config = FUTURES_EXCHANGES[exchange1]
+        exchange2_config = FUTURES_EXCHANGES[exchange2]
+        symbol1 = exchange1_config["symbol_format"](base)
+        symbol2 = exchange2_config["symbol_format"](base)
+        url1 = exchange1_config["url_format"](symbol1.replace(':USDT', ''))
+        url2 = exchange2_config["url_format"](symbol2.replace(':USDT', ''))
+
+    safe_base = html.escape(base)
+
+    # Создаем красивое сообщение с информацией о длительности
+    message = (
+        f"🎯 <b>ЦЕНЫ СРАВНИЛИСЬ!</b> {emoji}\n\n"
+        f"▫️ <b>Тип:</b> {arb_type_name} арбитраж\n"
+        f"▫️ <b>Монета:</b> <code>{safe_base}</code>\n"
+        f"▫️ <b>Разница цен:</b> <code>{spread:.2f}%</code>\n"
+        f"▫️ <b>Длительность арбитража:</b> {duration_str}\n\n"
+
+        f"🟢 <b><a href='{url1}'>{exchange1.upper()}</a>:</b>\n"
+        f"   💰 Цена: <code>${price1:.8f}</code>\n"
+        f"   📊 Объем: {volume1_str}\n\n"
+
+        f"🔵 <b><a href='{url2}'>{exchange2.upper()}</a>:</b>\n"
+        f"   💰 Цена: <code>${price2:.8f}</code>\n"
+        f"   📊 Объем: {volume2_str}\n\n"
+
+        f"⏰ <i>{current_time_str}</i>\n"
+        f"🔔 <i>Уведомление о сходимости цен</i>"
+    )
+
+    await send_telegram_message(message)
+    logger.info(
+        f"Отправлено уведомление о сходимости цен для {base} ({arb_type}): {spread:.4f}%, длительность: {duration_str}")
+
+
+def update_arbitrage_duration(arb_type: str, base: str, exchange1: str, exchange2: str, spread: float):
+    """Обновляет время длительности арбитражной возможности"""
+    key = f"{arb_type}_{base}_{exchange1}_{exchange2}"
+    current_time = time.time()
+
+    # Если связка была отправлена в Telegram и спред превышает порог арбитража - начинаем отсчет
+    if (key in sent_arbitrage_opportunities and
+            SETTINGS[arb_type]['THRESHOLD_PERCENT'] <= spread <= SETTINGS[arb_type]['MAX_THRESHOLD_PERCENT'] and
+            key not in arbitrage_start_times):
+        arbitrage_start_times[key] = current_time
+        previous_arbitrage_opportunities[key] = True
+        logger.debug(f"Начало арбитража для {key}")
+
+    # Если спред упал ниже порога сходимости - вычисляем длительность и очищаем
+    elif (spread <= SETTINGS[arb_type]['PRICE_CONVERGENCE_THRESHOLD'] and
+          key in arbitrage_start_times):
+        start_time = arbitrage_start_times.pop(key)
+        duration = current_time - start_time
+        logger.debug(f"Завершение арбитража для {key}, длительность: {duration:.0f} сек")
+        return duration
+
+    return None
+
+
+def update_current_arbitrage_opportunities(arb_type: str, base: str, exchange1: str, exchange2: str, spread: float,
+                                           price1: float, price2: float, volume1: float = None, volume2: float = None):
+    """Обновляет информацию о текущих арбитражных возможностях (только для отправленных связок)"""
+    key = f"{arb_type}_{base}_{exchange1}_{exchange2}"
+    current_time = time.time()
+
+    # Обновляем только связки, которые были отправлены в Telegram
+    if key in sent_arbitrage_opportunities:
+        current_arbitrage_opportunities[key] = {
+            'arb_type': arb_type,
+            'base': base,
+            'exchange1': exchange1,
+            'exchange2': exchange2,
+            'spread': spread,
+            'price1': price1,
+            'price2': price2,
+            'volume1': volume1,
+            'volume2': volume2,
+            'start_time': sent_arbitrage_opportunities[key]['start_time'],
+            'last_updated': current_time
+        }
+
+
+async def get_current_arbitrage_opportunities():
+    """Возвращает форматированное сообщение с текущими арбитражными возможностями (только отправленными в Telegram)"""
+
+    # Очищаем устаревшие возможности
+    cleanup_old_opportunities()
+
+    # Используем только отправленные связки
+    filtered_opportunities = {}
+    current_time = time.time()
+
+    for key, opportunity in sent_arbitrage_opportunities.items():
+        # Проверяем, что связка не устарела
+        if (current_time - opportunity['last_updated']) <= 3600:
+            filtered_opportunities[key] = opportunity
+
+    if not filtered_opportunities:
+        return "📊 <b>Актуальные арбитражные связки</b>\n\n" \
+               "⏳ В данный момент активных арбитражных возможностей не обнаружено."
+
+    # Группируем по типу арбитража
+    spot_opportunities = []
+    futures_opportunities = []
+    spot_futures_opportunities = []
+
+    for key, opportunity in filtered_opportunities.items():
+        arb_type = opportunity['arb_type']
+        duration = time.time() - opportunity['start_time']
+
+        opportunity_info = {
+            'base': opportunity['base'],
+            'exchange1': opportunity['exchange1'],
+            'exchange2': opportunity['exchange2'],
+            'spread': opportunity['spread'],
+            'price1': opportunity['price1'],
+            'price2': opportunity['price2'],
+            'duration': duration
+        }
+
+        if arb_type == 'SPOT':
+            spot_opportunities.append(opportunity_info)
+        elif arb_type == 'FUTURES':
+            futures_opportunities.append(opportunity_info)
+        else:
+            spot_futures_opportunities.append(opportunity_info)
+
+    # Сортируем по спреду (по убыванию)
+    spot_opportunities.sort(key=lambda x: x['spread'], reverse=True)
+    futures_opportunities.sort(key=lambda x: x['spread'], reverse=True)
+    spot_futures_opportunities.sort(key=lambda x: x['spread'], reverse=True)
+
+    utc_plus_3 = timezone(timedelta(hours=3))
+    current_time_str = datetime.now(utc_plus_3).strftime('%H:%M:%S')
+
+    message = "📊 <b>Актуальные арбитражные связки</b>\n\n"
+
+    # Добавляем спотовые возможности
+    if spot_opportunities:
+        message += "🚀 <b>Спотовый арбитраж:</b>\n"
+        for opp in spot_opportunities:
+            duration_str = format_duration(opp['duration'])
+            message += (
+                f"   ▫️ <code>{opp['base']}</code>: {opp['spread']:.2f}%\n"
+                f"      🟢 {opp['exchange1'].upper()} → 🔴 {opp['exchange2'].upper()}\n"
+                f"      ⏱ Длительность: {duration_str}\n\n"
+            )
+
+    # Добавляем фьючерсные возможности
+    if futures_opportunities:
+        message += "📊 <b>Фьючерсный арбитраж:</b>\n"
+        for opp in futures_opportunities:
+            duration_str = format_duration(opp['duration'])
+            message += (
+                f"   ▫️ <code>{opp['base']}</code>: {opp['spread']:.2f}%\n"
+                f"      🟢 {opp['exchange1'].upper()} → 🔴 {opp['exchange2'].upper()}\n"
+                f"      ⏱ Длительность: {duration_str}\n\n"
+            )
+
+    # Добавляем спот-фьючерсные возможности
+    if spot_futures_opportunities:
+        message += "↔️ <b>Спот-Фьючерсный арбитраж:</b>\n"
+        for opp in spot_futures_opportunities:
+            duration_str = format_duration(opp['duration'])
+            message += (
+                f"   ▫️ <code>{opp['base']}</code>: {opp['spread']:.2f}%\n"
+                f"      🟢 {opp['exchange1'].upper()} (спот) → 🔴 {opp['exchange2'].upper()} (фьючерсы)\n"
+                f"      ⏱ Длительность: {duration_str}\n\n"
+            )
+
+    message += f"⏰ <i>Обновлено: {current_time_str}</i>\n"
+    message += f"📈 <i>Всего активных связок: {len(filtered_opportunities)}</i>"
+
+    return message
+
+
+def cleanup_old_opportunities():
+    """Очищает устаревшие арбитражные возможности (старше 1 часа)"""
+    current_time = time.time()
+    keys_to_remove = []
+
+    for key, opportunity in sent_arbitrage_opportunities.items():
+        # Удаляем если связка устарела (старше 1 часа)
+        if current_time - opportunity['last_updated'] > 3600:
+            keys_to_remove.append(key)
+
+    for key in keys_to_remove:
+        del sent_arbitrage_opportunities[key]
+        if key in current_arbitrage_opportunities:
+            del current_arbitrage_opportunities[key]
+        if key in arbitrage_start_times:
+            del arbitrage_start_times[key]
+        logger.debug(f"Удалена устаревшая связка: {key}")
 
 
 def load_markets_sync(exchange):
@@ -808,6 +1113,22 @@ async def check_spot_arbitrage():
                         f"Пара {base}: спред {spread:.2f}% (min: {min_ex[0]} {min_ex[1]['price']}, max: {max_ex[0]} {max_ex[1]['price']})"
                     )
 
+                    # Обновляем информацию о текущих арбитражных возможностях (только для отправленных связок)
+                    update_current_arbitrage_opportunities(
+                        'SPOT', base, min_ex[0], max_ex[0], spread,
+                        min_ex[1]['price'], max_ex[1]['price'],
+                        min_ex[1]['volume'], max_ex[1]['volume']
+                    )
+
+                    # Проверяем сходимость цен для уведомления (только для отправленных связок)
+                    duration = update_arbitrage_duration('SPOT', base, min_ex[0], max_ex[0], spread)
+                    if duration is not None:
+                        await send_price_convergence_notification(
+                            'SPOT', base, min_ex[0], max_ex[0],
+                            min_ex[1]['price'], max_ex[1]['price'], spread,
+                            min_ex[1]['volume'], max_ex[1]['volume'], duration
+                        )
+
                     if SETTINGS['SPOT']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['SPOT']['MAX_THRESHOLD_PERCENT']:
                         # Проверяем доступность депозита и вывода
                         deposit_available = await check_deposit_withdrawal_status(
@@ -948,11 +1269,24 @@ async def check_spot_arbitrage():
                         logger.info(
                             f"Найдена арбитражная возможность: {base} ({spread:.2f}%)"
                         )
+
+                        # Отправляем сообщение в Telegram
                         await send_telegram_message(message)
+
+                        # Добавляем связку в отправленные возможности
+                        add_opportunity_to_sent(
+                            'SPOT', base, min_ex[0], max_ex[0], spread,
+                            min_ex[1]['price'], max_ex[1]['price'],
+                            min_ex[1]['volume'], max_ex[1]['volume']
+                        )
+
                         found_opportunities += 1
 
                 except Exception as e:
                     logger.error(f"Ошибка обработки пары {base}: {e}")
+
+            # Очищаем устаревшие возможности
+            cleanup_old_opportunities()
 
             logger.info(
                 f"Цикл спотового арбитража завершен. Найдено возможностей: {found_opportunities}")
@@ -1066,6 +1400,22 @@ async def check_futures_arbitrage():
                     logger.debug(
                         f"Пара {base}: спред {spread:.2f}% (min: {min_ex[0]} {min_ex[1]['price']}, max: {max_ex[0]} {max_ex[1]['price']})")
 
+                    # Обновляем информацию о текущих арбитражных возможностях (только для отправленных связок)
+                    update_current_arbitrage_opportunities(
+                        'FUTURES', base, min_ex[0], max_ex[0], spread,
+                        min_ex[1]['price'], max_ex[1]['price'],
+                        min_ex[1]['volume'], max_ex[1]['volume']
+                    )
+
+                    # Проверяем сходимость цен для уведомления (только для отправленных связок)
+                    duration = update_arbitrage_duration('FUTURES', base, min_ex[0], max_ex[0], spread)
+                    if duration is not None:
+                        await send_price_convergence_notification(
+                            'FUTURES', base, min_ex[0], max_ex[0],
+                            min_ex[1]['price'], max_ex[1]['price'], spread,
+                            min_ex[1]['volume'], max_ex[1]['volume'], duration
+                        )
+
                     if SETTINGS['FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['FUTURES'][
                         'MAX_THRESHOLD_PERCENT']:
                         # Получаем комиссии
@@ -1148,11 +1498,24 @@ async def check_futures_arbitrage():
                         )
 
                         logger.info(f"Найдена арбитражная возможность: {base} ({spread:.2f}%)")
+
+                        # Отправляем сообщение в Telegram
                         await send_telegram_message(message)
+
+                        # Добавляем связку в отправленные возможности
+                        add_opportunity_to_sent(
+                            'FUTURES', base, min_ex[0], max_ex[0], spread,
+                            min_ex[1]['price'], max_ex[1]['price'],
+                            min_ex[1]['volume'], max_ex[1]['volume']
+                        )
+
                         found_opportunities += 1
 
                 except Exception as e:
                     logger.error(f"Ошибка обработки пары {base}: {e}")
+
+            # Очищаем устаревшие возможности
+            cleanup_old_opportunities()
 
             logger.info(f"Цикл фьючерсного арбитража завершен. Найдено возможностей: {found_opportunities}")
             await asyncio.sleep(SETTINGS['FUTURES']['CHECK_INTERVAL'])
@@ -1297,6 +1660,22 @@ async def check_spot_futures_arbitrage():
                     logger.debug(
                         f"Пара {base}: спред {spread:.2f}% (spot: {min_spot[0]} {min_spot[1]['price']}, futures: {max_futures[0]} {max_futures[1]['price']})")
 
+                    # Обновляем информацию о текущих арбитражных возможностях (только для отправленных связок)
+                    update_current_arbitrage_opportunities(
+                        'SPOT_FUTURES', base, min_spot[0], max_futures[0], spread,
+                        min_spot[1]['price'], max_futures[1]['price'],
+                        min_spot[1]['volume'], max_futures[1]['volume']
+                    )
+
+                    # Проверяем сходимость цен для уведомления (только для отправленных связок)
+                    duration = update_arbitrage_duration('SPOT_FUTURES', base, min_spot[0], max_futures[0], spread)
+                    if duration is not None:
+                        await send_price_convergence_notification(
+                            'SPOT_FUTURES', base, min_spot[0], max_futures[0],
+                            min_spot[1]['price'], max_futures[1]['price'], spread,
+                            min_spot[1]['volume'], max_futures[1]['volume'], duration
+                        )
+
                     if SETTINGS['SPOT_FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['SPOT_FUTURES'][
                         'MAX_THRESHOLD_PERCENT']:
                         # Проверяем доступность депозита и вывода для спота
@@ -1393,11 +1772,24 @@ async def check_spot_futures_arbitrage():
                         )
 
                         logger.info(f"Найдена спот-фьючерсная арбитражная возможность: {base} ({spread:.2f}%)")
+
+                        # Отправляем сообщение в Telegram
                         await send_telegram_message(message)
+
+                        # Добавляем связку в отправленные возможности
+                        add_opportunity_to_sent(
+                            'SPOT_FUTURES', base, min_spot[0], max_futures[0], spread,
+                            min_spot[1]['price'], max_futures[1]['price'],
+                            min_spot[1]['volume'], max_futures[1]['volume']
+                        )
+
                         found_opportunities += 1
 
                 except Exception as e:
                     logger.error(f"Ошибка обработки пары {base}: {e}")
+
+            # Очищаем устаревшие возможности
+            cleanup_old_opportunities()
 
             logger.info(f"Цикл спот-фьючерсного арбитража завершен. Найдено возможностей: {found_opportunities}")
             await asyncio.sleep(SETTINGS['SPOT_FUTURES']['CHECK_INTERVAL'])
@@ -1556,6 +1948,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return SETTINGS_MENU
 
+    elif text == "📈 Актуальные связки":
+        # Показываем "Загрузка..."
+        await update.message.reply_text(
+            "⏳ Загружаем информацию о текущих арбитражных возможностях...",
+            parse_mode="HTML"
+        )
+
+        # Получаем текущие арбитражные возможности
+        response = await get_current_arbitrage_opportunities()
+
+        # Отправляем результаты
+        await update.message.reply_text(
+            text=response,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=get_main_keyboard()
+        )
+        return
+
     elif text == "📊 Статус бота":
         spot_status = "✅ ВКЛ" if SETTINGS['SPOT']['ENABLED'] else "❌ ВЫКЛ"
         futures_status = "✅ ВКЛ" if SETTINGS['FUTURES']['ENABLED'] else "❌ ВЫКЛ"
@@ -1569,7 +1980,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚀 Спотовый арбитраж: {spot_status}\n"
             f"📊 Фьючерсный арбитраж: {futures_status}\n"
             f"↔️ Спот-Фьючерсный арбитраж: {spot_futures_status}\n"
-            f"🏛 Активные биржи: {exchanges_status}",
+            f"🏛 Активные биржи: {exchanges_status}\n"
+            f"📈 Активных связок: {len(sent_arbitrage_opportunities)}",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -1580,7 +1992,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🤖 <b>Crypto Arbitrage Bot</b>\n\n"
             "🔍 <b>Поиск монеты</b> - показывает цены на разных биржах, просто введите название монеты (BTC, ETH...)\n"
             "🔧 <b>Настройки</b> - позволяет настроить параметры арбитража\n"
-            "📊 <b>Статус бота</b> - показывает текущее состояние бота\n\n"
+            "📊 <b>Статус бота</b> - показывает текущее состояние бота\n"
+            "📈 <b>Актуальные связки</b> - показывает текущие арбитражные возможности и их длительность\n\n"
             "Бот автоматически ищет арбитражные возможности и присылает уведомления.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
@@ -1808,6 +2221,23 @@ async def handle_spot_settings(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return SETTING_VALUE
 
+    elif text.startswith("Сходимость:"):
+        context.user_data['setting'] = ('SPOT', 'PRICE_CONVERGENCE_THRESHOLD')
+        await update.message.reply_text(
+            f"Введите новое значение для порога сходимости цен (текущее: {SETTINGS['SPOT']['PRICE_CONVERGENCE_THRESHOLD']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Увед. сравн.:"):
+        SETTINGS['SPOT']['PRICE_CONVERGENCE_ENABLED'] = not SETTINGS['SPOT']['PRICE_CONVERGENCE_ENABLED']
+        save_settings(SETTINGS)
+        status = "🔔 ВКЛ" if SETTINGS['SPOT']['PRICE_CONVERGENCE_ENABLED'] else "🔕 ВЫКЛ"
+        await update.message.reply_text(
+            f"✅ Уведомления о сравнении цен {status}",
+            reply_markup=get_spot_settings_keyboard()
+        )
+        return SPOT_SETTINGS
+
     elif text.startswith("Статус:"):
         SETTINGS['SPOT']['ENABLED'] = not SETTINGS['SPOT']['ENABLED']
         save_settings(SETTINGS)
@@ -1886,6 +2316,23 @@ async def handle_futures_settings(update: Update, context: ContextTypes.DEFAULT_
             f"Введите новое значение для минимальной прибыли (текущее: ${SETTINGS['FUTURES']['MIN_NET_PROFIT_USD']}):"
         )
         return SETTING_VALUE
+
+    elif text.startswith("Сходимость:"):
+        context.user_data['setting'] = ('FUTURES', 'PRICE_CONVERGENCE_THRESHOLD')
+        await update.message.reply_text(
+            f"Введите новое значение для порога сходимости цен (текущее: {SETTINGS['FUTURES']['PRICE_CONVERGENCE_THRESHOLD']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Увед. сравн.:"):
+        SETTINGS['FUTURES']['PRICE_CONVERGENCE_ENABLED'] = not SETTINGS['FUTURES']['PRICE_CONVERGENCE_ENABLED']
+        save_settings(SETTINGS)
+        status = "🔔 ВКЛ" if SETTINGS['FUTURES']['PRICE_CONVERGENCE_ENABLED'] else "🔕 ВЫКЛ"
+        await update.message.reply_text(
+            f"✅ Уведомления о сравнении цен {status}",
+            reply_markup=get_futures_settings_keyboard()
+        )
+        return FUTURES_SETTINGS
 
     elif text.startswith("Статус:"):
         SETTINGS['FUTURES']['ENABLED'] = not SETTINGS['FUTURES']['ENABLED']
@@ -1966,6 +2413,24 @@ async def handle_spot_futures_settings(update: Update, context: ContextTypes.DEF
         )
         return SETTING_VALUE
 
+    elif text.startswith("Сходимость:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'PRICE_CONVERGENCE_THRESHOLD')
+        await update.message.reply_text(
+            f"Введите новое значение для порога сходимости цен (текущее: {SETTINGS['SPOT_FUTURES']['PRICE_CONVERGENCE_THRESHOLD']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Увед. сравн.:"):
+        SETTINGS['SPOT_FUTURES']['PRICE_CONVERGENCE_ENABLED'] = not SETTINGS['SPOT_FUTURES'][
+            'PRICE_CONVERGENCE_ENABLED']
+        save_settings(SETTINGS)
+        status = "🔔 ВКЛ" if SETTINGS['SPOT_FUTURES']['PRICE_CONVERGENCE_ENABLED'] else "🔕 ВЫКЛ"
+        await update.message.reply_text(
+            f"✅ Уведомления о сравнении цен {status}",
+            reply_markup=get_spot_futures_settings_keyboard()
+        )
+        return SPOT_FUTURES_SETTINGS
+
     elif text.startswith("Статус:"):
         SETTINGS['SPOT_FUTURES']['ENABLED'] = not SETTINGS['SPOT_FUTURES']['ENABLED']
         save_settings(SETTINGS)
@@ -2020,7 +2485,8 @@ async def handle_setting_value(update: Update, context: ContextTypes.DEFAULT_TYP
         new_value = float(update.message.text)
         category, setting = context.user_data['setting']
 
-        if setting in ['THRESHOLD_PERCENT', 'MAX_THRESHOLD_PERCENT', 'MAX_IMPACT_PERCENT']:
+        if setting in ['THRESHOLD_PERCENT', 'MAX_THRESHOLD_PERCENT', 'MAX_IMPACT_PERCENT',
+                       'PRICE_CONVERGENCE_THRESHOLD']:
             # Процентные значения
             if new_value <= 0 or new_value > 100:
                 await update.message.reply_text("❌ Значение должно быть между 0 и 100. Попробуйте снова:")
@@ -2122,10 +2588,13 @@ async def main():
 
         # Отправляем сообщение о запуске
         await send_telegram_message("🤖 <b>Бот успешно запущен!</b>\n\n"
-                                  "🚀 Спотовый арбитраж: " + ("✅ ВКЛ" if SETTINGS['SPOT']['ENABLED'] else "❌ ВЫКЛ") + "\n"
-                                  "📊 Фьючерсный арбитраж: " + ("✅ ВКЛ" if SETTINGS['FUTURES']['ENABLED'] else "❌ ВЫКЛ") + "\n"
-                                  "↔️ Спот-Фьючерсный арбитраж: " + ("✅ ВКЛ" if SETTINGS['SPOT_FUTURES']['ENABLED'] else "❌ ВЫКЛ") + "\n\n"
-                                  "Используйте /start для просмотра меню")
+                                    "🚀 Спотовый арбитраж: " + (
+                                        "✅ ВКЛ" if SETTINGS['SPOT']['ENABLED'] else "❌ ВЫКЛ") + "\n"
+                                                                                                "📊 Фьючерсный арбитраж: " + (
+                                        "✅ ВКЛ" if SETTINGS['FUTURES']['ENABLED'] else "❌ ВЫКЛ") + "\n"
+                                                                                                   "↔️ Спот-Фьючерсный арбитраж: " + (
+                                        "✅ ВКЛ" if SETTINGS['SPOT_FUTURES']['ENABLED'] else "❌ ВЫКЛ") + "\n\n"
+                                                                                                        "Используйте /start для просмотра меню")
 
         # Бесконечное ожидание
         while True:
