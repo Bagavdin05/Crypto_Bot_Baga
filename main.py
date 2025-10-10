@@ -311,7 +311,7 @@ FUTURES_EXCHANGES = {
         "taker_fee": 0.0005,
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.okx.com/trade-swap/{s.replace('/', '-').replace(':USDT', '').lower()}",
-        "blacklist": ["BTC"],
+        "blacklist": ["BTC", "ETH"],
         "emoji": "📊"
     },
     "gate": {
@@ -2626,4 +2626,4 @@ if __name__ == "__main__":
     logging.getLogger("ccxt").setLevel(logging.INFO)
 
     # Запуск асинхронного приложения
-    asyncio.run(main()) 
+    asyncio.run(main())
