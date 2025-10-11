@@ -107,6 +107,7 @@ sent_arbitrage_opportunities = defaultdict(dict)  # Для хранения от
 # Глобальные переменные для хранения последних настроек бирж
 LAST_EXCHANGE_SETTINGS = None
 
+
 # Загрузка сохраненных настроек
 def load_settings():
     try:
@@ -124,6 +125,7 @@ def load_settings():
         "EXCHANGES": EXCHANGE_SETTINGS.copy()
     }
 
+
 # Сохранение настроек
 def save_settings(settings):
     try:
@@ -131,6 +133,7 @@ def save_settings(settings):
             json.dump(settings, f, indent=4)
     except Exception as e:
         logger.error(f"Ошибка сохранения настроек: {e}")
+
 
 # Глобальные переменные
 SHARED_BOT = None
@@ -416,6 +419,7 @@ FUTURES_EXCHANGES = {
     }
 }
 
+
 # Reply-клавиатуры
 def get_main_keyboard():
     return ReplyKeyboardMarkup([
@@ -423,12 +427,14 @@ def get_main_keyboard():
         [KeyboardButton("📊 Статус бота"), KeyboardButton("ℹ️ Помощь")]
     ], resize_keyboard=True)
 
+
 def get_settings_keyboard():
     return ReplyKeyboardMarkup([
         [KeyboardButton("🚀️ Спот"), KeyboardButton("📊 Фьючерсы"), KeyboardButton("↔️ Спот-Фьючерсы")],
         [KeyboardButton("🏛 Биржи"), KeyboardButton("🔄 Сброс")],
         [KeyboardButton("🔙 Главное меню")]
     ], resize_keyboard=True)
+
 
 def get_spot_settings_keyboard():
     spot = SETTINGS['SPOT']
@@ -448,6 +454,7 @@ def get_spot_settings_keyboard():
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
+
 def get_futures_settings_keyboard():
     futures = SETTINGS['FUTURES']
     return ReplyKeyboardMarkup([
@@ -463,6 +470,7 @@ def get_futures_settings_keyboard():
          KeyboardButton(f"Увед. сравн.: {'🔔' if futures['PRICE_CONVERGENCE_ENABLED'] else '🔕'}")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
+
 
 def get_spot_futures_settings_keyboard():
     spot_futures = SETTINGS['SPOT_FUTURES']
@@ -480,6 +488,7 @@ def get_spot_futures_settings_keyboard():
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
+
 def get_exchange_settings_keyboard():
     keyboard = []
     row = []
@@ -493,6 +502,7 @@ def get_exchange_settings_keyboard():
         keyboard.append(row)
     keyboard.append([KeyboardButton("🔙 Назад в настройки")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 
 async def send_telegram_message(message: str, chat_id: str = None, reply_markup: ReplyKeyboardMarkup = None):
     global SHARED_BOT
@@ -514,6 +524,7 @@ async def send_telegram_message(message: str, chat_id: str = None, reply_markup:
         except TelegramError as e:
             logger.error(f"Ошибка отправки в {target_id}: {e}")
 
+
 def format_duration(seconds):
     """Форматирует длительность в читаемый вид"""
     if seconds < 60:
@@ -526,6 +537,7 @@ def format_duration(seconds):
         hours = int(seconds // 3600)
         minutes = int((seconds % 3600) // 60)
         return f"{hours} ч {minutes} мин"
+
 
 def add_opportunity_to_sent(arb_type: str, base: str, exchange1: str, exchange2: str, spread: float,
                             price1: float, price2: float, volume1: float = None, volume2: float = None):
@@ -555,6 +567,7 @@ def add_opportunity_to_sent(arb_type: str, base: str, exchange1: str, exchange2:
     previous_arbitrage_opportunities[key] = True
 
     logger.info(f"Связка добавлена в отправленные: {key}")
+
 
 async def send_price_convergence_notification(arb_type: str, base: str, exchange1: str, exchange2: str,
                                               price1: float, price2: float, spread: float, volume1: float = None,
@@ -671,6 +684,7 @@ async def send_price_convergence_notification(arb_type: str, base: str, exchange
 
     logger.info(f"Связка удалена из актуальных после сходимости цен: {key}")
 
+
 def update_arbitrage_duration(arb_type: str, base: str, exchange1: str, exchange2: str, spread: float):
     """Обновляет время длительности арбитражной возможности"""
     key = f"{arb_type}_{base}_{exchange1}_{exchange2}"
@@ -694,6 +708,7 @@ def update_arbitrage_duration(arb_type: str, base: str, exchange1: str, exchange
 
     return None
 
+
 def update_current_arbitrage_opportunities(arb_type: str, base: str, exchange1: str, exchange2: str, spread: float,
                                            price1: float, price2: float, volume1: float = None, volume2: float = None):
     """Обновляет информацию о текущих арбитражных возможностях (только для отправленных связок)"""
@@ -715,6 +730,7 @@ def update_current_arbitrage_opportunities(arb_type: str, base: str, exchange1: 
             'start_time': sent_arbitrage_opportunities[key]['start_time'],
             'last_updated': current_time
         }
+
 
 async def get_current_arbitrage_opportunities():
     """Возвращает форматированное сообщение с текущими арбитражными возможностями (только отправленными в Telegram)"""
@@ -809,6 +825,7 @@ async def get_current_arbitrage_opportunities():
 
     return message
 
+
 def cleanup_old_opportunities():
     """Очищает устаревшие арбитражные возможности (старше 1 часа)"""
     current_time = time.time()
@@ -827,6 +844,7 @@ def cleanup_old_opportunities():
             del arbitrage_start_times[key]
         logger.debug(f"Удалена устаревшая связка: {key}")
 
+
 def load_markets_sync(exchange):
     try:
         exchange.load_markets()
@@ -835,6 +853,7 @@ def load_markets_sync(exchange):
     except Exception as e:
         logger.error(f"Ошибка загрузки {exchange.id}: {e}")
         return None
+
 
 async def fetch_ticker_data(exchange, symbol: str):
     try:
@@ -864,6 +883,7 @@ async def fetch_ticker_data(exchange, symbol: str):
         logger.warning(f"Ошибка данных {symbol} на {exchange.id}: {e}")
         return None
 
+
 async def fetch_order_book(exchange, symbol: str, depth: int = SETTINGS['SPOT']['ORDER_BOOK_DEPTH']):
     try:
         order_book = await asyncio.get_event_loop().run_in_executor(
@@ -873,6 +893,7 @@ async def fetch_order_book(exchange, symbol: str, depth: int = SETTINGS['SPOT'][
     except Exception as e:
         logger.warning(f"Ошибка стакана {symbol} на {exchange.id}: {e}")
         return None
+
 
 def calculate_available_volume(order_book, side: str, max_impact_percent: float):
     if not order_book:
@@ -903,6 +924,7 @@ def calculate_available_volume(order_book, side: str, max_impact_percent: float)
             total_volume += volume
         return total_volume
     return 0
+
 
 async def check_deposit_withdrawal_status(exchange, currency: str, check_type: str = 'deposit'):
     try:
@@ -965,6 +987,7 @@ async def check_deposit_withdrawal_status(exchange, currency: str, check_type: s
             f"Ошибка проверки {check_type} {currency} на {exchange.id}: {e}")
         return True
 
+
 def calculate_min_entry_amount(buy_price: float, sell_price: float, min_profit: float, buy_fee_percent: float,
                                sell_fee_percent: float) -> float:
     profit_per_unit = sell_price * (1 - sell_fee_percent) - buy_price * (1 + buy_fee_percent)
@@ -972,6 +995,7 @@ def calculate_min_entry_amount(buy_price: float, sell_price: float, min_profit: 
         return 0
     min_amount = min_profit / profit_per_unit
     return min_amount * buy_price
+
 
 def calculate_profit(buy_price: float, sell_price: float, amount: float, buy_fee_percent: float,
                      sell_fee_percent: float) -> dict:
@@ -986,10 +1010,11 @@ def calculate_profit(buy_price: float, sell_price: float, amount: float, buy_fee
         "entry_amount": amount * buy_price
     }
 
+
 async def load_spot_exchanges():
     """Загружает спотовые биржи на основе текущих настроек"""
     global SPOT_EXCHANGES_LOADED, LAST_EXCHANGE_SETTINGS
-    
+
     exchanges = {}
     for name, config in SPOT_EXCHANGES.items():
         if not SETTINGS['EXCHANGES'][name]['ENABLED']:
@@ -1019,10 +1044,11 @@ async def load_spot_exchanges():
     LAST_EXCHANGE_SETTINGS = SETTINGS['EXCHANGES'].copy()
     return exchanges
 
+
 async def load_futures_exchanges():
     """Загружает фьючерсные биржи на основе текущих настроек"""
     global FUTURES_EXCHANGES_LOADED, LAST_EXCHANGE_SETTINGS
-    
+
     exchanges = {}
     for name, config in FUTURES_EXCHANGES.items():
         if not SETTINGS['EXCHANGES'][name]['ENABLED']:
@@ -1048,6 +1074,7 @@ async def load_futures_exchanges():
     FUTURES_EXCHANGES_LOADED = exchanges
     LAST_EXCHANGE_SETTINGS = SETTINGS['EXCHANGES'].copy()
     return exchanges
+
 
 async def check_spot_arbitrage():
     logger.info("Запуск проверки спотового арбитража")
@@ -1099,7 +1126,7 @@ async def check_spot_arbitrage():
             if LAST_EXCHANGE_SETTINGS != SETTINGS['EXCHANGES']:
                 logger.info("Обнаружено изменение настроек бирж. Перезагружаем спотовые биржи...")
                 await load_spot_exchanges()
-                
+
                 # Перестраиваем список пар после перезагрузки бирж
                 all_pairs = defaultdict(set)
                 for name, data in SPOT_EXCHANGES_LOADED.items():
@@ -1120,7 +1147,7 @@ async def check_spot_arbitrage():
                     for base, pairs in all_pairs.items()
                     if len(pairs) >= SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']
                 }
-                
+
                 if not valid_pairs:
                     logger.error("Нет пар, торгуемых хотя бы на двух биржах после перезагрузки")
                     await asyncio.sleep(SETTINGS['SPOT']['CHECK_INTERVAL'])
@@ -1355,6 +1382,7 @@ async def check_spot_arbitrage():
             logger.error(f"Ошибка в основном цикле спотового арбитража: {e}")
             await asyncio.sleep(60)
 
+
 async def check_futures_arbitrage():
     logger.info("Запуск проверки фьючерсного арбитража")
 
@@ -1402,7 +1430,7 @@ async def check_futures_arbitrage():
             if LAST_EXCHANGE_SETTINGS != SETTINGS['EXCHANGES']:
                 logger.info("Обнаружено изменение настроек бирж. Перезагружаем фьючерсные биржи...")
                 await load_futures_exchanges()
-                
+
                 # Перестраиваем список пар после перезагрузки бирж
                 all_pairs = defaultdict(set)
                 for name, data in FUTURES_EXCHANGES_LOADED.items():
@@ -1422,7 +1450,7 @@ async def check_futures_arbitrage():
                     base: list(pairs) for base, pairs in all_pairs.items()
                     if len(pairs) >= SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']
                 }
-                
+
                 if not valid_pairs:
                     logger.error("Нет фьючерсных USDT пар, торгуемых хотя бы на двух биржах после перезагрузки")
                     await asyncio.sleep(SETTINGS['FUTURES']['CHECK_INTERVAL'])
@@ -1589,6 +1617,7 @@ async def check_futures_arbitrage():
             logger.error(f"Ошибка в основном цикле фьючерсного арбитража: {e}")
             await asyncio.sleep(60)
 
+
 async def check_spot_futures_arbitrage():
     """Проверка спот-фьючерсного арбитража"""
     logger.info("Запуск проверки спот-фьючерсного арбитража")
@@ -1658,7 +1687,7 @@ async def check_spot_futures_arbitrage():
                 logger.info("Обнаружено изменение настроек бирж. Перезагружаем спотовые и фьючерсные биржи...")
                 await load_spot_exchanges()
                 await load_futures_exchanges()
-                
+
                 # Перестраиваем списки пар после перезагрузки бирж
                 spot_pairs = defaultdict(set)
                 futures_pairs = defaultdict(set)
@@ -1690,7 +1719,7 @@ async def check_spot_futures_arbitrage():
                             logger.warning(f"Ошибка обработки фьючерсной пары {symbol} на {name}: {e}")
 
                 common_pairs = set(spot_pairs.keys()) & set(futures_pairs.keys())
-                
+
                 if not common_pairs:
                     logger.error("Нет общих пар для спот-фьючерсного арбитража после перезагрузки")
                     await asyncio.sleep(SETTINGS['SPOT_FUTURES']['CHECK_INTERVAL'])
@@ -1875,6 +1904,7 @@ async def check_spot_futures_arbitrage():
             logger.error(f"Ошибка в основном цикле спот-фьючерсного арбитража: {e}")
             await asyncio.sleep(60)
 
+
 def format_price(price: float) -> str:
     """Форматирует цену для красивого отображения"""
     if price is None:
@@ -1890,6 +1920,7 @@ def format_price(price: float) -> str:
 
     # Для цен < 1 используем 8 знаков после запятой
     return f"$<code>{price:.8f}</code>"
+
 
 def format_volume(vol: float) -> str:
     """Форматирует объем для красивого отображения"""
@@ -1907,10 +1938,11 @@ def format_volume(vol: float) -> str:
     # Для объемов < 1000
     return f"${vol:.0f}"
 
+
 async def get_coin_prices(coin: str, market_type: str):
     """Получает цены монеты на всех биржах для указанного рынка с фильтрацией по объему"""
     coin = coin.upper()
-    
+
     # Перезагружаем биржи если настройки изменились
     if LAST_EXCHANGE_SETTINGS != SETTINGS['EXCHANGES']:
         if market_type == "spot":
@@ -2017,6 +2049,7 @@ async def get_coin_prices(coin: str, market_type: str):
 
     return response
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
     user_id = str(update.effective_user.id)
@@ -2030,6 +2063,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка текстовых сообщений"""
@@ -2127,6 +2161,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard()
     )
 
+
 async def handle_coin_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка выбора типа рынка для монеты"""
     text = update.message.text
@@ -2177,6 +2212,7 @@ async def handle_coin_selection(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=get_main_keyboard()
     )
     return ConversationHandler.END
+
 
 async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка меню настроек"""
@@ -2242,6 +2278,7 @@ async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_settings_keyboard()
     )
     return SETTINGS_MENU
+
 
 async def handle_spot_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка настроек спота"""
@@ -2352,6 +2389,7 @@ async def handle_spot_settings(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     return SPOT_SETTINGS
 
+
 async def handle_futures_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка настроек фьючерсов"""
     text = update.message.text
@@ -2446,6 +2484,7 @@ async def handle_futures_settings(update: Update, context: ContextTypes.DEFAULT_
         reply_markup=get_futures_settings_keyboard()
     )
     return FUTURES_SETTINGS
+
 
 async def handle_spot_futures_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка настроек спот-фьючерсов"""
@@ -2543,6 +2582,7 @@ async def handle_spot_futures_settings(update: Update, context: ContextTypes.DEF
     )
     return SPOT_FUTURES_SETTINGS
 
+
 async def handle_exchange_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка настроек бирж"""
     text = update.message.text
@@ -2572,6 +2612,7 @@ async def handle_exchange_settings(update: Update, context: ContextTypes.DEFAULT
         reply_markup=get_exchange_settings_keyboard()
     )
     return EXCHANGE_SETTINGS_MENU
+
 
 async def handle_setting_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ввода значения настройки"""
@@ -2627,6 +2668,7 @@ async def handle_setting_value(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ Пожалуйста, введите числовое значение:")
         return SETTING_VALUE
 
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена текущей операции"""
     await update.message.reply_text(
@@ -2634,6 +2676,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard()
     )
     return ConversationHandler.END
+
 
 async def start_bot():
     """Запуск Telegram бота с обработчиками команд"""
@@ -2662,6 +2705,7 @@ async def start_bot():
     await application.start()
     await application.updater.start_polling()
     return application
+
 
 async def main():
     global SHARED_BOT
@@ -2696,6 +2740,7 @@ async def main():
         await send_telegram_message(f"❌ <b>Бот остановлен из-за ошибки:</b>\n{str(e)}")
     finally:
         logger.info("Бот остановлен")
+
 
 if __name__ == "__main__":
     # Настройка логирования
