@@ -36,8 +36,10 @@ DEFAULT_SPOT_SETTINGS = {
     "ORDER_BOOK_DEPTH": 10,
     "MIN_NET_PROFIT_USD": 6,
     "ENABLED": True,
-    "PRICE_CONVERGENCE_THRESHOLD": 1.5,
-    "PRICE_CONVERGENCE_ENABLED": True
+    "PRICE_CONVERGENCE_THRESHOLD": 0.5,
+    "PRICE_CONVERGENCE_ENABLED": True,
+    "MIN_COIN_PRICE_USD": 0.000001,  # Минимальная стоимость монеты
+    "MAX_COIN_PRICE_USD": 2  # Максимальная стоимость монеты
 }
 
 # Конфигурация фьючерсного арбитража (по умолчанию)
@@ -51,8 +53,10 @@ DEFAULT_FUTURES_SETTINGS = {
     "MAX_ENTRY_AMOUNT_USDT": 250,
     "MIN_NET_PROFIT_USD": 5,
     "ENABLED": True,
-    "PRICE_CONVERGENCE_THRESHOLD": 1.5,
-    "PRICE_CONVERGENCE_ENABLED": True
+    "PRICE_CONVERGENCE_THRESHOLD": 0.5,
+    "PRICE_CONVERGENCE_ENABLED": True,
+    "MIN_COIN_PRICE_USD": 0.000001,  # Минимальная стоимость монеты
+    "MAX_COIN_PRICE_USD": 2  # Максимальная стоимость монеты
 }
 
 # Конфигурация спот-фьючерсного арбитража (по умолчанию)
@@ -66,8 +70,10 @@ DEFAULT_SPOT_FUTURES_SETTINGS = {
     "MAX_ENTRY_AMOUNT_USDT": 250,
     "MIN_NET_PROFIT_USD": 5,
     "ENABLED": True,
-    "PRICE_CONVERGENCE_THRESHOLD": 1.5,
-    "PRICE_CONVERGENCE_ENABLED": True
+    "PRICE_CONVERGENCE_THRESHOLD": 0.5,
+    "PRICE_CONVERGENCE_ENABLED": True,
+    "MIN_COIN_PRICE_USD": 0.000001,  # Минимальная стоимость монеты
+    "MAX_COIN_PRICE_USD": 2  # Максимальная стоимость монеты
 }
 
 # Настройки бирж
@@ -451,6 +457,8 @@ def get_spot_settings_keyboard():
          KeyboardButton(f"Статус: {'ВКЛ' if spot['ENABLED'] else 'ВЫКЛ'}")],
         [KeyboardButton(f"Сходимость: {spot['PRICE_CONVERGENCE_THRESHOLD']}%"),
          KeyboardButton(f"Увед. сравн.: {'🔔' if spot['PRICE_CONVERGENCE_ENABLED'] else '🔕'}")],
+        [KeyboardButton(f"Мин. цена: ${spot['MIN_COIN_PRICE_USD']}"),
+         KeyboardButton(f"Макс. цена: ${spot['MAX_COIN_PRICE_USD']}")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
@@ -468,6 +476,8 @@ def get_futures_settings_keyboard():
          KeyboardButton(f"Статус: {'ВКЛ' if futures['ENABLED'] else 'ВЫКЛ'}")],
         [KeyboardButton(f"Сходимость: {futures['PRICE_CONVERGENCE_THRESHOLD']}%"),
          KeyboardButton(f"Увед. сравн.: {'🔔' if futures['PRICE_CONVERGENCE_ENABLED'] else '🔕'}")],
+        [KeyboardButton(f"Мин. цена: ${futures['MIN_COIN_PRICE_USD']}"),
+         KeyboardButton(f"Макс. цена: ${futures['MAX_COIN_PRICE_USD']}")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
@@ -485,6 +495,8 @@ def get_spot_futures_settings_keyboard():
          KeyboardButton(f"Статус: {'ВКЛ' if spot_futures['ENABLED'] else 'ВЫКЛ'}")],
         [KeyboardButton(f"Сходимость: {spot_futures['PRICE_CONVERGENCE_THRESHOLD']}%"),
          KeyboardButton(f"Увед. сравн.: {'🔔' if spot_futures['PRICE_CONVERGENCE_ENABLED'] else '🔕'}")],
+        [KeyboardButton(f"Мин. цена: ${spot_futures['MIN_COIN_PRICE_USD']}"),
+         KeyboardButton(f"Макс. цена: ${spot_futures['MAX_COIN_PRICE_USD']}")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
@@ -1164,6 +1176,12 @@ async def check_spot_arbitrage():
                             data = await fetch_ticker_data(
                                 SPOT_EXCHANGES_LOADED[name]["api"], symbol)
                             if data and data['price'] is not None:
+                                # Проверяем фильтр по стоимости монеты
+                                if not (SETTINGS['SPOT']['MIN_COIN_PRICE_USD'] <= data['price'] <= SETTINGS['SPOT'][
+                                    'MAX_COIN_PRICE_USD']):
+                                    logger.debug(f"Цена {base} на {name} не соответствует фильтру: {data['price']}")
+                                    continue
+
                                 # Если объем известен, проверяем минимальный объем
                                 if data['volume'] is None:
                                     logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
@@ -1466,6 +1484,12 @@ async def check_futures_arbitrage():
                         try:
                             data = await fetch_ticker_data(FUTURES_EXCHANGES_LOADED[name]["api"], symbol)
                             if data and data['price'] is not None:
+                                # Проверяем фильтр по стоимости монеты
+                                if not (SETTINGS['FUTURES']['MIN_COIN_PRICE_USD'] <= data['price'] <=
+                                        SETTINGS['FUTURES']['MAX_COIN_PRICE_USD']):
+                                    logger.debug(f"Цена {base} на {name} не соответствует фильтру: {data['price']}")
+                                    continue
+
                                 # Если объем известен, проверяем минимальный объем
                                 if data['volume'] is None:
                                     logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
@@ -1736,6 +1760,13 @@ async def check_spot_futures_arbitrage():
                         try:
                             data = await fetch_ticker_data(SPOT_EXCHANGES_LOADED[name]["api"], symbol)
                             if data and data['price'] is not None:
+                                # Проверяем фильтр по стоимости монеты
+                                if not (SETTINGS['SPOT_FUTURES']['MIN_COIN_PRICE_USD'] <= data['price'] <=
+                                        SETTINGS['SPOT_FUTURES']['MAX_COIN_PRICE_USD']):
+                                    logger.debug(
+                                        f"Цена {base} на {name} (спот) не соответствует фильтру: {data['price']}")
+                                    continue
+
                                 if data['volume'] is None or data['volume'] >= SETTINGS['SPOT_FUTURES'][
                                     'MIN_VOLUME_USD']:
                                     spot_ticker_data[name] = data
@@ -1747,6 +1778,13 @@ async def check_spot_futures_arbitrage():
                         try:
                             data = await fetch_ticker_data(FUTURES_EXCHANGES_LOADED[name]["api"], symbol)
                             if data and data['price'] is not None:
+                                # Проверяем фильтр по стоимости монеты
+                                if not (SETTINGS['SPOT_FUTURES']['MIN_COIN_PRICE_USD'] <= data['price'] <=
+                                        SETTINGS['SPOT_FUTURES']['MAX_COIN_PRICE_USD']):
+                                    logger.debug(
+                                        f"Цена {base} на {name} (фьючерсы) не соответствует фильтру: {data['price']}")
+                                    continue
+
                                 if data['volume'] is None or data['volume'] >= SETTINGS['SPOT_FUTURES'][
                                     'MIN_VOLUME_USD']:
                                     futures_ticker_data[name] = data
@@ -1918,7 +1956,7 @@ def format_price(price: float) -> str:
     if price >= 1:
         return f"$<code>{price:.4f}</code>"
 
-    # Для цен < 1 используем 8 знаков после запятой
+    # Для цен < 1 используем 8 знака после запятой
     return f"$<code>{price:.8f}</code>"
 
 
@@ -1964,8 +2002,12 @@ async def get_coin_prices(coin: str, market_type: str):
     # Определяем минимальный объем в зависимости от типа рынка
     if market_type == "spot":
         min_volume = SETTINGS['SPOT']['MIN_VOLUME_USD']
+        min_coin_price = SETTINGS['SPOT']['MIN_COIN_PRICE_USD']
+        max_coin_price = SETTINGS['SPOT']['MAX_COIN_PRICE_USD']
     else:
         min_volume = SETTINGS['FUTURES']['MIN_VOLUME_USD']
+        min_coin_price = SETTINGS['FUTURES']['MIN_COIN_PRICE_USD']
+        max_coin_price = SETTINGS['FUTURES']['MAX_COIN_PRICE_USD']
 
     for name, data in exchanges.items():
         exchange = data["api"]
@@ -1981,6 +2023,12 @@ async def get_coin_prices(coin: str, market_type: str):
 
                 ticker = await fetch_ticker_data(exchange, symbol)
                 if ticker and ticker['price']:
+                    # Проверяем фильтр по стоимости монеты
+                    if not (min_coin_price <= ticker['price'] <= max_coin_price):
+                        filtered_out += 1
+                        logger.debug(f"Цена {coin} на {name} не соответствует фильтру: {ticker['price']}")
+                        continue
+
                     # Проверяем объем - фильтруем по минимальному объему из настроек
                     if ticker.get('volume') is not None and ticker['volume'] < min_volume:
                         filtered_out += 1
@@ -2023,6 +2071,7 @@ async def get_coin_prices(coin: str, market_type: str):
         # Формируем заголовок с информацией о фильтрации
         response = f"{market_color} <b>{market_name} рынки для <code>{coin}</code>:</b>\n\n"
         response += f"<i>Минимальный объем: ${min_volume:,.0f}</i>\n"
+        response += f"<i>Диапазон цен: ${min_coin_price:.4f} - ${max_coin_price:.2f}</i>\n"
         response += f"<i>Отфильтровано бирж: {filtered_out}</i>\n\n"
 
         # Добавляем данные по каждой бирже
@@ -2043,7 +2092,7 @@ async def get_coin_prices(coin: str, market_type: str):
         response += f"⏱ {current_time} | Бирж: {found_on}"
     else:
         if filtered_out > 0:
-            response = f"❌ Монета {coin} найдена на {filtered_out} биржах, но объем меньше ${min_volume:,.0f}"
+            response = f"❌ Монета {coin} найдена на {filtered_out} биржах, но не соответствует фильтрам (объем < ${min_volume:,.0f} или цена вне диапазона)"
         else:
             response = f"❌ Монета {coin} не найдена на {market_name} рынке"
 
@@ -2373,6 +2422,20 @@ async def handle_spot_settings(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return SPOT_SETTINGS
 
+    elif text.startswith("Мин. цена:"):
+        context.user_data['setting'] = ('SPOT', 'MIN_COIN_PRICE_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для минимальной стоимости монеты (текущее: ${SETTINGS['SPOT']['MIN_COIN_PRICE_USD']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. цена:"):
+        context.user_data['setting'] = ('SPOT', 'MAX_COIN_PRICE_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для максимальной стоимости монеты (текущее: ${SETTINGS['SPOT']['MAX_COIN_PRICE_USD']}):"
+        )
+        return SETTING_VALUE
+
     elif text.startswith("Статус:"):
         SETTINGS['SPOT']['ENABLED'] = not SETTINGS['SPOT']['ENABLED']
         save_settings(SETTINGS)
@@ -2468,6 +2531,20 @@ async def handle_futures_settings(update: Update, context: ContextTypes.DEFAULT_
             reply_markup=get_futures_settings_keyboard()
         )
         return FUTURES_SETTINGS
+
+    elif text.startswith("Мин. цена:"):
+        context.user_data['setting'] = ('FUTURES', 'MIN_COIN_PRICE_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для минимальной стоимости монеты (текущее: ${SETTINGS['FUTURES']['MIN_COIN_PRICE_USD']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. цена:"):
+        context.user_data['setting'] = ('FUTURES', 'MAX_COIN_PRICE_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для максимальной стоимости монеты (текущее: ${SETTINGS['FUTURES']['MAX_COIN_PRICE_USD']}):"
+        )
+        return SETTING_VALUE
 
     elif text.startswith("Статус:"):
         SETTINGS['FUTURES']['ENABLED'] = not SETTINGS['FUTURES']['ENABLED']
@@ -2566,6 +2643,20 @@ async def handle_spot_futures_settings(update: Update, context: ContextTypes.DEF
         )
         return SPOT_FUTURES_SETTINGS
 
+    elif text.startswith("Мин. цена:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'MIN_COIN_PRICE_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для минимальной стоимости монеты (текущее: ${SETTINGS['SPOT_FUTURES']['MIN_COIN_PRICE_USD']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. цена:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'MAX_COIN_PRICE_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для максимальной стоимости монеты (текущее: ${SETTINGS['SPOT_FUTURES']['MAX_COIN_PRICE_USD']}):"
+        )
+        return SETTING_VALUE
+
     elif text.startswith("Статус:"):
         SETTINGS['SPOT_FUTURES']['ENABLED'] = not SETTINGS['SPOT_FUTURES']['ENABLED']
         save_settings(SETTINGS)
@@ -2640,6 +2731,11 @@ async def handle_setting_value(update: Update, context: ContextTypes.DEFAULT_TYP
             # Глубина стакана
             if new_value < 1 or new_value > 50:
                 await update.message.reply_text("❌ Глубина стакана должна быть между 1 и 50. Попробуйте снова:")
+                return SETTING_VALUE
+        elif setting in ['MIN_COIN_PRICE_USD', 'MAX_COIN_PRICE_USD']:
+            # Стоимость монеты
+            if new_value <= 0:
+                await update.message.reply_text("❌ Значение должно быть положительным. Попробуйте снова:")
                 return SETTING_VALUE
 
         SETTINGS[category][setting] = new_value
