@@ -329,9 +329,21 @@ async def get_dex_screener_pairs():
                                 if quote_token != 'USDT':
                                     continue
                                 
-                                liquidity_usd = pair.get('liquidity', {}).get('usd', 0)
-                                volume_h24 = pair.get('volume', {}).get('h24', 0)
-                                price_usd = pair.get('priceUsd', 0)
+                                # Преобразуем значения в числа с обработкой ошибок
+                                try:
+                                    liquidity_usd = float(pair.get('liquidity', {}).get('usd', 0))
+                                except (TypeError, ValueError):
+                                    liquidity_usd = 0
+                                
+                                try:
+                                    volume_h24 = float(pair.get('volume', {}).get('h24', 0))
+                                except (TypeError, ValueError):
+                                    volume_h24 = 0
+                                
+                                try:
+                                    price_usd = float(pair.get('priceUsd', 0))
+                                except (TypeError, ValueError):
+                                    price_usd = 0
                                 
                                 # Проверяем ликвидность и объем
                                 if (liquidity_usd >= SETTINGS['DEX_CEX']['MIN_LIQUIDITY_USD'] and
@@ -351,7 +363,7 @@ async def get_dex_screener_pairs():
                                     
                                     pair_data = {
                                         'baseSymbol': base_symbol,
-                                        'price': float(price_usd),
+                                        'price': price_usd,
                                         'liquidity': {'usd': liquidity_usd},
                                         'volume': {'h24': volume_h24},
                                         'chain': pair.get('chain', 'Unknown'),
