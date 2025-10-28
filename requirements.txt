@@ -5,11 +5,3 @@ python-dotenv
 aiohttp
 web3
 requests
-logging
-datetime
-collections
-html
-re
-json
-os
-time
