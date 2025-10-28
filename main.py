@@ -27,18 +27,21 @@ TELEGRAM_CHAT_IDS = ["1167694150", "7916502470", "5381553894", "1111230981"]
 
 # Конфигурация DEX-CEX арбитража
 DEFAULT_DEX_CEX_SETTINGS = {
-    "THRESHOLD_PERCENT": 5.0,
-    "MAX_THRESHOLD_PERCENT": 50,
+    "THRESHOLD_PERCENT": 3.0,
+    "MAX_THRESHOLD_PERCENT": 30,
     "CHECK_INTERVAL": 30,
-    "MIN_LIQUIDITY_USD": 50000,
-    "MIN_VOLUME_USD": 100000,
+    "MIN_LIQUIDITY_USD": 10000,  # Уменьшено для большего охвата
+    "MIN_VOLUME_USD": 50000,     # Уменьшено для большего охвата
     "MIN_ENTRY_AMOUNT_USDT": 10,
     "MAX_ENTRY_AMOUNT_USDT": 500,
-    "MIN_NET_PROFIT_USD": 5,
+    "MIN_NET_PROFIT_USD": 3,     # Уменьшено
     "ENABLED": True,
     "PRICE_CONVERGENCE_THRESHOLD": 0.5,
     "PRICE_CONVERGENCE_ENABLED": True,
-    "MAX_PAIRS_TO_MONITOR": 500
+    "MAX_PAIRS_TO_MONITOR": 200,
+    "USE_TRENDING_PAIRS": True,   # Новый параметр
+    "MIN_PRICE_USD": 0.000001,    # Новый параметр
+    "MAX_PRICE_USD": 1000         # Новый параметр
 }
 
 # Настройки бирж
@@ -84,85 +87,29 @@ current_arbitrage_opportunities = defaultdict(dict)
 arbitrage_start_times = defaultdict(dict)
 last_convergence_notification = defaultdict(dict)
 
-# Расширенный список популярных монет
+# Более сфокусированный список популярных монет
 POPULAR_TOKENS = [
-    # Major Cryptocurrencies
-    "BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "AVAX", "DOT", 
-    "DOGE", "MATIC", "LTC", "LINK", "ATOM", "XLM", "BCH", "ETC",
-    "XMR", "XTZ", "ALGO", "FIL", "EOS", "AAVE", "GRT", "MANA",
-    "SAND", "ENJ", "CHZ", "AXS", "GALA", "APE", "MKR", "COMP",
-    "SNX", "CRV", "UNI", "SUSHI", "YFI", "BAL", "REN", "OMG",
+    # Major
+    "BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "AVAX", "DOT", "DOGE", "MATIC",
+    "LTC", "LINK", "ATOM", "XLM", "BCH", "ETC", "XMR", "XTZ", "ALGO", "FIL",
     
-    # Layer 1 & Smart Contract Platforms
-    "NEAR", "FTM", "ONE", "VET", "ICX", "ZIL", "ONT", "IOST",
-    "WAVES", "KSM", "DASH", "ZEC", "XEM", "SC", "BTT", "WIN",
-    "BAND", "OCEAN", "RSR", "CVC", "REQ", "NMR", "POLY", "LRC",
-    "STORJ", "KNC", "INJ", "RUNE", "THETA", "FTT", "HT", "OKB",
-    "LEO", "CRO", "NEO", "QTUM", "IOTA", "EGLD", "FLOW", "MINA",
-    "CELO", "KAVA", "ANKR", "RVN", "IOTX", "VTHO", "TFUEL", "HOT",
-    "STMX", "PERP", "UMA", "BADGER", "MIR", "TORN", "POND", "ALPHA",
-    "SKL", "LPT", "BICO", "MPL", "GTC", "ENS", "ANT", "MASK",
-    "API3", "TRB", "BOND", "RAD", "QUICK", "SFP", "XVS", "BAKE",
-    "CAKE", "BURGER", "ALICE", "DODO", "LINA", "LIT", "SXP", "WRX",
+    # DeFi
+    "UNI", "AAVE", "COMP", "MKR", "SNX", "CRV", "SUSHI", "YFI", "BAL", "REN",
     
-    # DeFi Tokens
-    "1INCH", "ACH", "ADX", "AGIX", "AKRO", "ALCX", "ALEPH", "ALPACA",
-    "AMP", "AR", "ARDR", "ARK", "AUDIO", "BAT", "BETA", "BLZ",
-    "BNT", "BOND", "C98", "CELR", "CFG", "CHR", "CKB", "CLV",
-    "COTI", "CVC", "CVP", "DAG", "DENT", "DGB", "DIA", "DNT",
-    "DUSK", "ELF", "ENG", "ERN", "FARM", "FET", "FIDA", "FIS",
-    "FLM", "FLOKI", "FORTH", "FRONT", "FUN", "GNO", "GODS", "GOG",
-    "GTC", "GTO", "HARD", "HBAR", "HIVE", "HNT", "HOLO", "HOT",
-    "ICP", "ICX", "IDEX", "ILV", "IMX", "JASMY", "JST", "JUV",
-    "KDA", "KLAY", "KMD", "KNC", "KSM", "LDO", "LEVER", "LINA",
-    "LINK", "LOKA", "LRC", "LTO", "LUNA", "MAGIC", "MASK", "MDT",
-    "MEME", "MFT", "MIR", "MITH", "MKR", "MLN", "MOB", "MOVR",
-    "MTL", "MULTI", "NKN", "NMR", "NULS", "OAX", "OCEAN", "OGN",
-    "OM", "OMG", "ONG", "ONT", "ORN", "OXT", "PAXG", "PENDLE",
-    "PHA", "PLA", "POLS", "POLY", "POND", "POWR", "PROM", "PROS",
-    "PUNDIX", "QNT", "QSP", "QTUM", "QUICK", "RAD", "RAMP", "RARE",
-    "RARI", "RAY", "REEF", "REN", "REP", "REQ", "RLC", "RLY",
-    "RNDR", "ROSE", "RPL", "RSR", "RUNE", "RVN", "SAND", "SCRT",
-    "SFP", "SHIB", "SKL", "SLP", "SNT", "SNX", "SOL", "SPELL",
-    "SRM", "STG", "STMX", "STORJ", "STPT", "STRAX", "STX", "SUN",
-    "SUPER", "SUSHI", "SXP", "SYN", "SYS", "T", "TFUEL", "THETA",
-    "TKO", "TLM", "TOMO", "TORN", "TRB", "TRIBE", "TRU", "TRX",
-    "TWT", "UMA", "UNFI", "UNI", "USTC", "UTK", "VET", "VGX",
-    "VITE", "VTHO", "WAN", "WAVES", "WAXP", "WBTC", "WING", "WNXM",
-    "WOO", "XEC", "XEM", "XLM", "XMR", "XRP", "XTZ", "XVG",
-    "XVS", "YFI", "YFII", "YGG", "ZEC", "ZEN", "ZIL", "ZRX",
+    # Meme
+    "SHIB", "PEPE", "FLOKI", "BONK", "WIF", "MEME", "BABYDOGE",
     
-    # Meme Coins
-    "SHIB", "PEPE", "FLOKI", "BONK", "WIF", "MEME", "DOGE", "BABYDOGE",
-    "KISHU", "ELON", "SAMO", "MYRO", "POPCAT", "COQ", "TURBO", "LADYS",
+    # Gaming
+    "GALA", "MANA", "SAND", "ENJ", "AXS", "YGG", "MAGIC", "ALICE",
     
-    # AI & Big Data
-    "AGIX", "FET", "OCEAN", "NMR", "RLC", "NUM", "GLM", "CTXC",
-    "DTA", "MITX", "PHB", "VAI", "DBC", "TRIAS", "ORAI", "PAAL",
+    # AI
+    "AGIX", "FET", "OCEAN", "NMR", "RLC", "PAAL", "TAO",
     
-    # Gaming & Metaverse
-    "ILV", "GALA", "MANA", "SAND", "ENJ", "AXS", "YGG", "MAGIC",
-    "ALICE", "VRA", "CGG", "DG", "UFO", "TLM", "BLOK", "CITY",
-    "DPET", "MBOX", "WRLD", "RFOX", "ALPACA", "XWG", "GODS", "VOXEL",
-    
-    # Real World Assets (RWA)
-    "ONDO", "TRU", "CFG", "RIO", "PRO", "SLN", "IXS", "CREDI",
-    
-    # Layer 2 & Scaling
-    "ARB", "OP", "STRK", "METIS", "IMX", "BOBA", "LRC", "DUSK",
-    
-    # Oracle & Interoperability
-    "LINK", "BAND", "TRB", "DIA", "UMA", "API3", "Pyth", "PYTH",
-    
-    # Privacy & Security
-    "XMR", "ZEC", "DASH", "ZEN", "SC", "MOB", "ROSE", "OASIS",
-    
-    # Storage & Cloud
-    "FIL", "AR", "STORJ", "SC", "BLZ", "CRU", "LAMB", "TFT",
+    # Layer 2
+    "ARB", "OP", "STRK", "METIS", "IMX",
     
     # Exchange Tokens
-    "BNB", "FTT", "HT", "OKB", "LEO", "CRO", "KCS", "BGB",
-    "MX", "GT", "CET", "DG", "WOOK", "SRM", "RAY", "ORCA"
+    "FTT", "HT", "OKB", "LEO", "CRO", "KCS", "BGB"
 ]
 
 # Reply-клавиатуры
@@ -376,16 +323,83 @@ def update_current_arbitrage_opportunities(base: str, dex_price: float, cex_pric
             'last_updated': current_time
         }
 
-async def get_dex_screener_pairs():
-    """Получает пары с DexScreener с фильтрацией по ликвидности"""
+async def get_trending_pairs():
+    """Получает трендовые пары с DexScreener"""
+    try:
+        url = "https://api.dexscreener.com/latest/dex/trending"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=30) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    pairs = data.get('pairs', [])
+                    
+                    filtered_pairs = []
+                    for pair in pairs:
+                        try:
+                            # Проверяем, что это USDT пара
+                            quote_token = pair.get('quoteToken', {}).get('symbol', '').upper()
+                            if quote_token != 'USDT':
+                                continue
+                            
+                            # Преобразуем значения
+                            liquidity_usd = float(pair.get('liquidity', {}).get('usd', 0))
+                            volume_h24 = float(pair.get('volume', {}).get('h24', 0))
+                            price_usd = float(pair.get('priceUsd', 0))
+                            
+                            # Проверяем фильтры
+                            if (liquidity_usd >= SETTINGS['DEX_CEX']['MIN_LIQUIDITY_USD'] and
+                                volume_h24 >= SETTINGS['DEX_CEX']['MIN_VOLUME_USD'] and
+                                price_usd >= SETTINGS['DEX_CEX']['MIN_PRICE_USD'] and
+                                price_usd <= SETTINGS['DEX_CEX']['MAX_PRICE_USD']):
+                                
+                                base_symbol = pair['baseToken']['symbol'].upper()
+                                base_symbol = re.sub(r'\.\w+$', '', base_symbol)
+                                
+                                # Пропускаем пары с неподходящими символами
+                                if not re.match(r'^[A-Z0-9]{2,15}$', base_symbol):
+                                    continue
+                                
+                                # Пропускаем стейблкоины
+                                if any(stable in base_symbol for stable in ['USDT', 'USDC', 'BUSD', 'DAI', 'TUSD']):
+                                    continue
+                                
+                                pair_data = {
+                                    'baseSymbol': base_symbol,
+                                    'price': price_usd,
+                                    'liquidity': {'usd': liquidity_usd},
+                                    'volume': {'h24': volume_h24},
+                                    'chain': pair.get('chain', 'Unknown'),
+                                    'pairAddress': pair.get('pairAddress'),
+                                    'chainId': pair.get('chainId'),
+                                    'url': pair.get('url', f"https://dexscreener.com/{pair.get('chainId', '')}/{pair.get('pairAddress', '')}")
+                                }
+                                
+                                filtered_pairs.append(pair_data)
+                                
+                                if len(filtered_pairs) >= SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']:
+                                    break
+                                
+                        except Exception as e:
+                            continue
+                    
+                    logger.info(f"Загружено {len(filtered_pairs)} трендовых пар")
+                    return filtered_pairs
+                    
+    except Exception as e:
+        logger.error(f"Ошибка получения трендовых пар: {e}")
+    
+    return []
+
+async def get_popular_pairs():
+    """Получает популярные пары по токенам"""
     all_pairs = []
     
-    # Разбиваем токены на группы для более эффективного поиска
-    token_groups = [POPULAR_TOKENS[i:i + 20] for i in range(0, len(POPULAR_TOKENS), 20)]
+    # Используем более крупные группы
+    token_groups = [POPULAR_TOKENS[i:i + 25] for i in range(0, len(POPULAR_TOKENS), 25)]
     
     for token_group in token_groups:
         try:
-            # Ищем несколько токенов одновременно
             search_query = " ".join(token_group)
             url = f"https://api.dexscreener.com/latest/dex/search?q={search_query}"
             
@@ -397,40 +411,25 @@ async def get_dex_screener_pairs():
                         
                         for pair in pairs:
                             try:
-                                # Проверяем, что это USDT пара
                                 quote_token = pair.get('quoteToken', {}).get('symbol', '').upper()
                                 if quote_token != 'USDT':
                                     continue
                                 
-                                # Преобразуем значения в числа с обработкой ошибок
-                                try:
-                                    liquidity_usd = float(pair.get('liquidity', {}).get('usd', 0))
-                                except (TypeError, ValueError):
-                                    liquidity_usd = 0
+                                liquidity_usd = float(pair.get('liquidity', {}).get('usd', 0))
+                                volume_h24 = float(pair.get('volume', {}).get('h24', 0))
+                                price_usd = float(pair.get('priceUsd', 0))
                                 
-                                try:
-                                    volume_h24 = float(pair.get('volume', {}).get('h24', 0))
-                                except (TypeError, ValueError):
-                                    volume_h24 = 0
-                                
-                                try:
-                                    price_usd = float(pair.get('priceUsd', 0))
-                                except (TypeError, ValueError):
-                                    price_usd = 0
-                                
-                                # Проверяем ликвидность и объем
                                 if (liquidity_usd >= SETTINGS['DEX_CEX']['MIN_LIQUIDITY_USD'] and
                                     volume_h24 >= SETTINGS['DEX_CEX']['MIN_VOLUME_USD'] and
-                                    price_usd > 0):
+                                    price_usd >= SETTINGS['DEX_CEX']['MIN_PRICE_USD'] and
+                                    price_usd <= SETTINGS['DEX_CEX']['MAX_PRICE_USD']):
                                     
                                     base_symbol = pair['baseToken']['symbol'].upper()
                                     base_symbol = re.sub(r'\.\w+$', '', base_symbol)
                                     
-                                    # Пропускаем пары с неподходящими символами
                                     if not re.match(r'^[A-Z0-9]{2,15}$', base_symbol):
                                         continue
                                     
-                                    # Проверяем, что это не стейблкоин
                                     if any(stable in base_symbol for stable in ['USDT', 'USDC', 'BUSD', 'DAI', 'TUSD']):
                                         continue
                                     
@@ -452,26 +451,60 @@ async def get_dex_screener_pairs():
                                             all_pairs.remove(existing_pair)
                                         all_pairs.append(pair_data)
                                     
-                                    # Ограничиваем общее количество пар
                                     if len(all_pairs) >= SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']:
                                         return all_pairs
                                     
-                            except Exception as e:
-                                logger.warning(f"Ошибка обработки пары: {e}")
+                            except Exception:
                                 continue
                     
-                    else:
-                        logger.warning(f"Ошибка API DexScreener: {response.status}")
-                        
         except Exception as e:
             logger.warning(f"Ошибка получения данных для группы токенов: {e}")
             continue
         
-        # Делаем небольшую паузу между запросами
-        await asyncio.sleep(1)
+        await asyncio.sleep(1)  # Пауза между запросами
     
-    logger.info(f"Загружено {len(all_pairs)} пар с DexScreener")
     return all_pairs
+
+async def get_dex_screener_pairs():
+    """Получает пары с DexScreener - основной улучшенный метод"""
+    all_pairs = []
+    
+    # Сначала получаем трендовые пары (если включено)
+    if SETTINGS['DEX_CEX'].get('USE_TRENDING_PAIRS', True):
+        trending_pairs = await get_trending_pairs()
+        all_pairs.extend(trending_pairs)
+    
+    # Если трендовых пар недостаточно, добавляем популярные
+    if len(all_pairs) < SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR'] // 2:
+        popular_pairs = await get_popular_pairs()
+        
+        # Добавляем только уникальные пары
+        existing_symbols = {p['baseSymbol'] for p in all_pairs}
+        for pair in popular_pairs:
+            if pair['baseSymbol'] not in existing_symbols:
+                all_pairs.append(pair)
+                existing_symbols.add(pair['baseSymbol'])
+                
+            if len(all_pairs) >= SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']:
+                break
+    
+    # Сортируем по ликвидности и убираем дубликаты
+    unique_pairs = {}
+    for pair in all_pairs:
+        symbol = pair['baseSymbol']
+        if symbol not in unique_pairs or pair['liquidity']['usd'] > unique_pairs[symbol]['liquidity']['usd']:
+            unique_pairs[symbol] = pair
+    
+    final_pairs = list(unique_pairs.values())
+    
+    # Сортируем по ликвидности (по убыванию)
+    final_pairs.sort(key=lambda x: x['liquidity']['usd'], reverse=True)
+    
+    # Берем топ пар
+    final_pairs = final_pairs[:SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']]
+    
+    logger.info(f"Итоговое количество пар для мониторинга: {len(final_pairs)}")
+    return final_pairs
 
 async def load_futures_exchanges():
     """Загружает фьючерсные биржи"""
@@ -511,7 +544,9 @@ async def fetch_cex_price(symbol: str):
                 None, exchange.fetch_ticker, futures_symbol)
             return float(ticker['last']) if ticker and ticker.get('last') else None
         except ccxt.BadSymbol:
-            # Пара не найдена на фьючерсах
+            return None
+        except ccxt.BaseError as e:
+            logger.warning(f"CCXT ошибка для {symbol}: {e}")
             return None
             
     except Exception as e:
@@ -520,16 +555,19 @@ async def fetch_cex_price(symbol: str):
 
 def calculate_profit(buy_price: float, sell_price: float, amount: float, fee_percent: float = 0.0006) -> dict:
     """Рассчитывает прибыль для арбитража"""
-    buy_cost = amount * buy_price * (1 + fee_percent)
-    sell_revenue = amount * sell_price * (1 - fee_percent)
-    net_profit = sell_revenue - buy_cost
-    profit_percent = (net_profit / buy_cost) * 100 if buy_cost > 0 else 0
+    try:
+        buy_cost = amount * buy_price * (1 + fee_percent)
+        sell_revenue = amount * sell_price * (1 - fee_percent)
+        net_profit = sell_revenue - buy_cost
+        profit_percent = (net_profit / buy_cost) * 100 if buy_cost > 0 else 0
 
-    return {
-        "net": net_profit,
-        "percent": profit_percent,
-        "entry_amount": amount * buy_price
-    }
+        return {
+            "net": net_profit,
+            "percent": profit_percent,
+            "entry_amount": amount * buy_price
+        }
+    except Exception:
+        return {"net": 0, "percent": 0, "entry_amount": 0}
 
 async def check_dex_cex_arbitrage():
     """Основная функция проверки DEX-CEX арбитража"""
@@ -556,21 +594,22 @@ async def check_dex_cex_arbitrage():
                 continue
 
             found_opportunities = 0
+            processed_symbols = set()
             
-            # Группируем пары по символу, выбираем самую ликвидную для каждого символа
-            pairs_by_symbol = {}
-            for pair in dex_pairs:
-                symbol = pair['baseSymbol']
-                if symbol not in pairs_by_symbol or pair['liquidity']['usd'] > pairs_by_symbol[symbol]['liquidity']['usd']:
-                    pairs_by_symbol[symbol] = pair
-
             # Проверяем арбитраж для каждой пары
-            for symbol, dex_data in pairs_by_symbol.items():
+            for dex_data in dex_pairs:
                 try:
+                    symbol = dex_data['baseSymbol']
+                    
+                    # Пропускаем дубликаты
+                    if symbol in processed_symbols:
+                        continue
+                    processed_symbols.add(symbol)
+                    
                     dex_price = dex_data['price']
                     cex_price = await fetch_cex_price(symbol)
                     
-                    if not cex_price or dex_price == 0:
+                    if not cex_price or cex_price == 0 or dex_price == 0:
                         continue
 
                     # Рассчитываем спред
@@ -605,9 +644,6 @@ async def check_dex_cex_arbitrage():
                         # Рассчитываем прибыль
                         fee = FUTURES_EXCHANGES_LOADED["mexc"]["config"]["taker_fee"]
                         
-                        # Для LONG: покупаем на DEX по dex_price, продаем на CEX по cex_price
-                        # Для SHORT: продаем на DEX по dex_price, покупаем на CEX по cex_price
-                        
                         if signal == "LONG":
                             buy_price = dex_price
                             sell_price = cex_price
@@ -616,9 +652,12 @@ async def check_dex_cex_arbitrage():
                             sell_price = dex_price
 
                         # Рассчитываем минимальную сумму для прибыли
-                        min_amount_for_profit = (SETTINGS['DEX_CEX']['MIN_NET_PROFIT_USD'] / 
-                                               (sell_price * (1 - fee) - buy_price * (1 + fee)))
-                        
+                        try:
+                            min_amount_for_profit = (SETTINGS['DEX_CEX']['MIN_NET_PROFIT_USD'] / 
+                                                   (sell_price * (1 - fee) - buy_price * (1 + fee)))
+                        except ZeroDivisionError:
+                            continue
+
                         if min_amount_for_profit <= 0:
                             continue
 
@@ -819,8 +858,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔍 <b>Как это работает:</b>\n"
             "• Бот мониторит цены на DexScreener (DEX) и MEXC Futures (CEX)\n"
             "• При обнаружении разницы цен отправляет сигнал:\n"
-            "  🟢 LONG: Цена на DEX выше - ШОРТ на MEXC\n"
-            "  🔴 SHORT: Цена на DEX ниже - ЛОНГ на MEXC\n"
+            "  🟢 LONG: Цена на DEX выше - ЛОНГ на MEXC\n"
+            "  🔴 SHORT: Цена на DEX ниже - ШОРТ на MEXC\n"
             "• При сходимости цен отправляет уведомление о закрытии сделки\n\n"
             "📊 <b>Актуальные связки</b> - текущие арбитражные возможности\n"
             "🔧 <b>Настройки</b> - параметры арбитража\n"
