@@ -27,7 +27,7 @@ TELEGRAM_CHAT_IDS = ["1167694150", "7916502470", "5381553894", "1111230981"]
 
 # Конфигурация DEX-CEX арбитража
 DEFAULT_DEX_CEX_SETTINGS = {
-    "THRESHOLD_PERCENT": 2.0,
+    "THRESHOLD_PERCENT": 5.0,
     "MAX_THRESHOLD_PERCENT": 50,
     "CHECK_INTERVAL": 30,
     "MIN_LIQUIDITY_USD": 50000,
@@ -38,7 +38,7 @@ DEFAULT_DEX_CEX_SETTINGS = {
     "ENABLED": True,
     "PRICE_CONVERGENCE_THRESHOLD": 0.5,
     "PRICE_CONVERGENCE_ENABLED": True,
-    "MAX_PAIRS_TO_MONITOR": 300
+    "MAX_PAIRS_TO_MONITOR": 500
 }
 
 # Настройки бирж
@@ -83,6 +83,87 @@ sent_arbitrage_opportunities = defaultdict(dict)
 current_arbitrage_opportunities = defaultdict(dict)
 arbitrage_start_times = defaultdict(dict)
 last_convergence_notification = defaultdict(dict)
+
+# Расширенный список популярных монет
+POPULAR_TOKENS = [
+    # Major Cryptocurrencies
+    "BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "AVAX", "DOT", 
+    "DOGE", "MATIC", "LTC", "LINK", "ATOM", "XLM", "BCH", "ETC",
+    "XMR", "XTZ", "ALGO", "FIL", "EOS", "AAVE", "GRT", "MANA",
+    "SAND", "ENJ", "CHZ", "AXS", "GALA", "APE", "MKR", "COMP",
+    "SNX", "CRV", "UNI", "SUSHI", "YFI", "BAL", "REN", "OMG",
+    
+    # Layer 1 & Smart Contract Platforms
+    "NEAR", "FTM", "ONE", "VET", "ICX", "ZIL", "ONT", "IOST",
+    "WAVES", "KSM", "DASH", "ZEC", "XEM", "SC", "BTT", "WIN",
+    "BAND", "OCEAN", "RSR", "CVC", "REQ", "NMR", "POLY", "LRC",
+    "STORJ", "KNC", "INJ", "RUNE", "THETA", "FTT", "HT", "OKB",
+    "LEO", "CRO", "NEO", "QTUM", "IOTA", "EGLD", "FLOW", "MINA",
+    "CELO", "KAVA", "ANKR", "RVN", "IOTX", "VTHO", "TFUEL", "HOT",
+    "STMX", "PERP", "UMA", "BADGER", "MIR", "TORN", "POND", "ALPHA",
+    "SKL", "LPT", "BICO", "MPL", "GTC", "ENS", "ANT", "MASK",
+    "API3", "TRB", "BOND", "RAD", "QUICK", "SFP", "XVS", "BAKE",
+    "CAKE", "BURGER", "ALICE", "DODO", "LINA", "LIT", "SXP", "WRX",
+    
+    # DeFi Tokens
+    "1INCH", "ACH", "ADX", "AGIX", "AKRO", "ALCX", "ALEPH", "ALPACA",
+    "AMP", "AR", "ARDR", "ARK", "AUDIO", "BAT", "BETA", "BLZ",
+    "BNT", "BOND", "C98", "CELR", "CFG", "CHR", "CKB", "CLV",
+    "COTI", "CVC", "CVP", "DAG", "DENT", "DGB", "DIA", "DNT",
+    "DUSK", "ELF", "ENG", "ERN", "FARM", "FET", "FIDA", "FIS",
+    "FLM", "FLOKI", "FORTH", "FRONT", "FUN", "GNO", "GODS", "GOG",
+    "GTC", "GTO", "HARD", "HBAR", "HIVE", "HNT", "HOLO", "HOT",
+    "ICP", "ICX", "IDEX", "ILV", "IMX", "JASMY", "JST", "JUV",
+    "KDA", "KLAY", "KMD", "KNC", "KSM", "LDO", "LEVER", "LINA",
+    "LINK", "LOKA", "LRC", "LTO", "LUNA", "MAGIC", "MASK", "MDT",
+    "MEME", "MFT", "MIR", "MITH", "MKR", "MLN", "MOB", "MOVR",
+    "MTL", "MULTI", "NKN", "NMR", "NULS", "OAX", "OCEAN", "OGN",
+    "OM", "OMG", "ONG", "ONT", "ORN", "OXT", "PAXG", "PENDLE",
+    "PHA", "PLA", "POLS", "POLY", "POND", "POWR", "PROM", "PROS",
+    "PUNDIX", "QNT", "QSP", "QTUM", "QUICK", "RAD", "RAMP", "RARE",
+    "RARI", "RAY", "REEF", "REN", "REP", "REQ", "RLC", "RLY",
+    "RNDR", "ROSE", "RPL", "RSR", "RUNE", "RVN", "SAND", "SCRT",
+    "SFP", "SHIB", "SKL", "SLP", "SNT", "SNX", "SOL", "SPELL",
+    "SRM", "STG", "STMX", "STORJ", "STPT", "STRAX", "STX", "SUN",
+    "SUPER", "SUSHI", "SXP", "SYN", "SYS", "T", "TFUEL", "THETA",
+    "TKO", "TLM", "TOMO", "TORN", "TRB", "TRIBE", "TRU", "TRX",
+    "TWT", "UMA", "UNFI", "UNI", "USTC", "UTK", "VET", "VGX",
+    "VITE", "VTHO", "WAN", "WAVES", "WAXP", "WBTC", "WING", "WNXM",
+    "WOO", "XEC", "XEM", "XLM", "XMR", "XRP", "XTZ", "XVG",
+    "XVS", "YFI", "YFII", "YGG", "ZEC", "ZEN", "ZIL", "ZRX",
+    
+    # Meme Coins
+    "SHIB", "PEPE", "FLOKI", "BONK", "WIF", "MEME", "DOGE", "BABYDOGE",
+    "KISHU", "ELON", "SAMO", "MYRO", "POPCAT", "COQ", "TURBO", "LADYS",
+    
+    # AI & Big Data
+    "AGIX", "FET", "OCEAN", "NMR", "RLC", "NUM", "GLM", "CTXC",
+    "DTA", "MITX", "PHB", "VAI", "DBC", "TRIAS", "ORAI", "PAAL",
+    
+    # Gaming & Metaverse
+    "ILV", "GALA", "MANA", "SAND", "ENJ", "AXS", "YGG", "MAGIC",
+    "ALICE", "VRA", "CGG", "DG", "UFO", "TLM", "BLOK", "CITY",
+    "DPET", "MBOX", "WRLD", "RFOX", "ALPACA", "XWG", "GODS", "VOXEL",
+    
+    # Real World Assets (RWA)
+    "ONDO", "TRU", "CFG", "RIO", "PRO", "SLN", "IXS", "CREDI",
+    
+    # Layer 2 & Scaling
+    "ARB", "OP", "STRK", "METIS", "IMX", "BOBA", "LRC", "DUSK",
+    
+    # Oracle & Interoperability
+    "LINK", "BAND", "TRB", "DIA", "UMA", "API3", "Pyth", "PYTH",
+    
+    # Privacy & Security
+    "XMR", "ZEC", "DASH", "ZEN", "SC", "MOB", "ROSE", "OASIS",
+    
+    # Storage & Cloud
+    "FIL", "AR", "STORJ", "SC", "BLZ", "CRU", "LAMB", "TFT",
+    
+    # Exchange Tokens
+    "BNB", "FTT", "HT", "OKB", "LEO", "CRO", "KCS", "BGB",
+    "MX", "GT", "CET", "DG", "WOOK", "SRM", "RAY", "ORCA"
+]
 
 # Reply-клавиатуры
 def get_main_keyboard():
@@ -297,24 +378,16 @@ def update_current_arbitrage_opportunities(base: str, dex_price: float, cex_pric
 
 async def get_dex_screener_pairs():
     """Получает пары с DexScreener с фильтрацией по ликвидности"""
-    # Используем популярные токены для мониторинга
-    popular_tokens = [
-        "SOL", "ETH", "BTC", "BNB", "AVAX", "MATIC", "ARB", "OP", 
-        "SUI", "APT", "ADA", "XRP", "DOGE", "DOT", "LINK", "LTC",
-        "BCH", "ATOM", "NEAR", "FIL", "ETC", "ALGO", "XLM", "XMR",
-        "EOS", "TRX", "XTZ", "AAVE", "COMP", "MKR", "SNX", "UNI",
-        "CRV", "SUSHI", "YFI", "BAL", "REN", "OMG", "ZRX", "BAT",
-        "ENJ", "MANA", "SAND", "GALA", "AXS", "SLP", "CHZ", "FTM",
-        "ONE", "VET", "ICX", "ZIL", "ONT", "IOST", "WAVES", "KSM",
-        "DASH", "ZEC", "XEM", "SC", "BTT", "WIN", "BAND", "OCEAN",
-        "RSR", "CVC", "REQ", "NMR", "POLY", "LRC", "STORJ", "KNC"
-    ]
-    
     all_pairs = []
     
-    for token in popular_tokens:
+    # Разбиваем токены на группы для более эффективного поиска
+    token_groups = [POPULAR_TOKENS[i:i + 20] for i in range(0, len(POPULAR_TOKENS), 20)]
+    
+    for token_group in token_groups:
         try:
-            url = f"https://api.dexscreener.com/latest/dex/search?q={token}"
+            # Ищем несколько токенов одновременно
+            search_query = " ".join(token_group)
+            url = f"https://api.dexscreener.com/latest/dex/search?q={search_query}"
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=30) as response:
@@ -381,21 +454,21 @@ async def get_dex_screener_pairs():
                                     
                                     # Ограничиваем общее количество пар
                                     if len(all_pairs) >= SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']:
-                                        break
+                                        return all_pairs
                                     
                             except Exception as e:
-                                logger.warning(f"Ошибка обработки пары {token}: {e}")
+                                logger.warning(f"Ошибка обработки пары: {e}")
                                 continue
                     
                     else:
-                        logger.warning(f"Ошибка API DexScreener для {token}: {response.status}")
+                        logger.warning(f"Ошибка API DexScreener: {response.status}")
                         
         except Exception as e:
-            logger.warning(f"Ошибка получения данных для токена {token}: {e}")
+            logger.warning(f"Ошибка получения данных для группы токенов: {e}")
             continue
         
         # Делаем небольшую паузу между запросами
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1)
     
     logger.info(f"Загружено {len(all_pairs)} пар с DexScreener")
     return all_pairs
@@ -733,7 +806,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔄 DEX-CEX арбитраж: {dex_cex_status}\n"
             f"🏛 Активные биржи: MEXC Futures\n"
             f"📈 Активных связок: {active_opportunities}\n"
-            f"⚡ Мониторинг пар: {SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']}",
+            f"⚡ Мониторинг пар: {SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']}\n"
+            f"📊 Популярных токенов: {len(POPULAR_TOKENS)}",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -793,7 +867,7 @@ async def handle_dex_cex_settings(update: Update, context: ContextTypes.DEFAULT_
 
     if text == "🔙 Назад в настройки":
         await update.message.reply_text(
-            "⚙️ <b>Настройки бота</b>\n\nВыберите категорию:",
+            "⚙️ <b>Настройки бота</b>\n\nВыберите категоию:",
             parse_mode="HTML",
             reply_markup=get_settings_keyboard()
         )
