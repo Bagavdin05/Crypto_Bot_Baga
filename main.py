@@ -27,18 +27,18 @@ TELEGRAM_CHAT_IDS = ["1167694150", "7916502470", "5381553894", "1111230981"]
 
 # Конфигурация DEX-CEX арбитража
 DEFAULT_DEX_CEX_SETTINGS = {
-    "THRESHOLD_PERCENT": 0.5,
-    "MAX_THRESHOLD_PERCENT": 20,
+    "THRESHOLD_PERCENT": 2.0,
+    "MAX_THRESHOLD_PERCENT": 50,
     "CHECK_INTERVAL": 30,
+    "MIN_LIQUIDITY_USD": 50000,
     "MIN_VOLUME_USD": 100000,
-    "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 170,
-    "MIN_NET_PROFIT_USD": 3,
+    "MIN_ENTRY_AMOUNT_USDT": 10,
+    "MAX_ENTRY_AMOUNT_USDT": 500,
+    "MIN_NET_PROFIT_USD": 5,
     "ENABLED": True,
     "PRICE_CONVERGENCE_THRESHOLD": 0.5,
     "PRICE_CONVERGENCE_ENABLED": True,
-    "DEX_TAKER_FEE": 0.003,  # 0.3% для DEX
-    "CEX_TAKER_FEE": 0.0006  # 0.06% для MEXC фьючерсов
+    "MAX_PAIRS_TO_MONITOR": 100
 }
 
 # Настройки бирж
@@ -56,44 +56,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("DexCexArbBot")
 
-# Глобальные переменные для отслеживания истории уведомлений и длительности арбитража
-price_convergence_history = defaultdict(dict)
-last_convergence_notification = defaultdict(dict)
-arbitrage_start_times = defaultdict(dict)
-current_arbitrage_opportunities = defaultdict(dict)
-previous_arbitrage_opportunities = defaultdict(dict)
-sent_arbitrage_opportunities = defaultdict(dict)
-
-# Глобальные переменные для хранения последних настроек бирж
-LAST_EXCHANGE_SETTINGS = None
-
-# Загрузка сохраненных настроек
-def load_settings():
-    try:
-        if os.path.exists('settings.json'):
-            with open('settings.json', 'r') as f:
-                return json.load(f)
-    except Exception as e:
-        logger.error(f"Ошибка загрузки настроек: {e}")
-
-    # Возвращаем настройки по умолчанию
-    return {
-        "DEX_CEX": DEFAULT_DEX_CEX_SETTINGS.copy(),
-        "EXCHANGES": EXCHANGE_SETTINGS.copy()
-    }
-
-# Сохранение настроек
-def save_settings(settings):
-    try:
-        with open('settings.json', 'w') as f:
-            json.dump(settings, f, indent=4)
-    except Exception as e:
-        logger.error(f"Ошибка сохранения настроек: {e}")
-
 # Глобальные переменные
 SHARED_BOT = None
 FUTURES_EXCHANGES_LOADED = {}
-SETTINGS = load_settings()
+SETTINGS = {
+    "DEX_CEX": DEFAULT_DEX_CEX_SETTINGS.copy(),
+    "EXCHANGES": EXCHANGE_SETTINGS.copy()
+}
 
 # Конфигурация MEXC для фьючерсов
 FUTURES_EXCHANGES = {
@@ -109,6 +78,12 @@ FUTURES_EXCHANGES = {
     }
 }
 
+# Глобальные переменные для отслеживания
+sent_arbitrage_opportunities = defaultdict(dict)
+current_arbitrage_opportunities = defaultdict(dict)
+arbitrage_start_times = defaultdict(dict)
+last_convergence_notification = defaultdict(dict)
+
 # Reply-клавиатуры
 def get_main_keyboard():
     return ReplyKeyboardMarkup([
@@ -118,8 +93,7 @@ def get_main_keyboard():
 
 def get_settings_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("🦄 DEX-CEX Арбитраж")],
-        [KeyboardButton("🏛 Биржи"), KeyboardButton("🔄 Сброс")],
+        [KeyboardButton("🔄 DEX-CEX Арбитраж")],
         [KeyboardButton("🔙 Главное меню")]
     ], resize_keyboard=True)
 
@@ -129,31 +103,17 @@ def get_dex_cex_settings_keyboard():
         [KeyboardButton(f"Порог: {dex_cex['THRESHOLD_PERCENT']}%"),
          KeyboardButton(f"Макс. порог: {dex_cex['MAX_THRESHOLD_PERCENT']}%")],
         [KeyboardButton(f"Интервал: {dex_cex['CHECK_INTERVAL']}с"),
-         KeyboardButton(f"Объем: ${dex_cex['MIN_VOLUME_USD'] / 1000:.0f}K")],
+         KeyboardButton(f"Лимидность: ${dex_cex['MIN_LIQUIDITY_USD']/1000:.0f}K")],
+        [KeyboardButton(f"Объем: ${dex_cex['MIN_VOLUME_USD']/1000:.0f}K"),
+         KeyboardButton(f"Пары: {dex_cex['MAX_PAIRS_TO_MONITOR']}")],
         [KeyboardButton(f"Мин. сумма: ${dex_cex['MIN_ENTRY_AMOUNT_USDT']}"),
          KeyboardButton(f"Макс. сумма: ${dex_cex['MAX_ENTRY_AMOUNT_USDT']}")],
         [KeyboardButton(f"Прибыль: ${dex_cex['MIN_NET_PROFIT_USD']}"),
          KeyboardButton(f"Статус: {'ВКЛ' if dex_cex['ENABLED'] else 'ВЫКЛ'}")],
-        [KeyboardButton(f"DEX комиссия: {dex_cex['DEX_TAKER_FEE']*100}%"),
-         KeyboardButton(f"CEX комиссия: {dex_cex['CEX_TAKER_FEE']*100}%")],
         [KeyboardButton(f"Сходимость: {dex_cex['PRICE_CONVERGENCE_THRESHOLD']}%"),
          KeyboardButton(f"Увед. сравн.: {'🔔' if dex_cex['PRICE_CONVERGENCE_ENABLED'] else '🔕'}")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
-
-def get_exchange_settings_keyboard():
-    keyboard = []
-    row = []
-    for i, (exchange, config) in enumerate(SETTINGS['EXCHANGES'].items()):
-        status = "✅" if config['ENABLED'] else "❌"
-        row.append(KeyboardButton(f"{exchange}: {status}"))
-        if (i + 1) % 2 == 0:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-    keyboard.append([KeyboardButton("🔙 Назад в настройки")])
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def send_telegram_message(message: str, chat_id: str = None, reply_markup: ReplyKeyboardMarkup = None):
     global SHARED_BOT
@@ -188,20 +148,21 @@ def format_duration(seconds):
         minutes = int((seconds % 3600) // 60)
         return f"{hours} ч {minutes} мин"
 
-def add_opportunity_to_sent(arb_type: str, base: str, dex_data: dict, cex_data: dict, spread: float,
-                            direction: str, min_entry_amount: float = None, max_entry_amount: float = None,
-                            profit_min: dict = None, profit_max: dict = None):
+def add_opportunity_to_sent(base: str, dex_price: float, cex_price: float, spread: float,
+                           signal: str, dex_data: dict, min_entry_amount: float = None, 
+                           max_entry_amount: float = None, profit_min: dict = None, profit_max: dict = None):
     """Добавляет связку в отправленные возможности"""
-    key = f"{arb_type}_{base}_{dex_data['dex_url']}_{cex_data['exchange']}"
+    key = f"DEX_CEX_{base}"
     current_time = time.time()
 
     sent_arbitrage_opportunities[key] = {
-        'arb_type': arb_type,
+        'arb_type': 'DEX_CEX',
         'base': base,
-        'dex_data': dex_data,
-        'cex_data': cex_data,
+        'dex_price': dex_price,
+        'cex_price': cex_price,
         'spread': spread,
-        'direction': direction,
+        'signal': signal,
+        'dex_data': dex_data,
         'min_entry_amount': min_entry_amount,
         'max_entry_amount': max_entry_amount,
         'profit_min': profit_min,
@@ -212,28 +173,28 @@ def add_opportunity_to_sent(arb_type: str, base: str, dex_data: dict, cex_data: 
 
     current_arbitrage_opportunities[key] = sent_arbitrage_opportunities[key].copy()
     arbitrage_start_times[key] = current_time
-    previous_arbitrage_opportunities[key] = True
 
-    logger.info(f"Связка добавлена в отправленные: {key}")
+    logger.info(f"DEX-CEX связка добавлена: {key}")
 
-async def send_price_convergence_notification(arb_type: str, base: str, dex_data: dict, cex_data: dict,
-                                              spread: float, direction: str, duration: float = None):
-    """Отправляет уведомление о сравнении цен с длительностью арбитража"""
-
-    if not SETTINGS[arb_type]['PRICE_CONVERGENCE_ENABLED']:
+async def send_price_convergence_notification(base: str, dex_price: float, cex_price: float, 
+                                            spread: float, signal: str, dex_data: dict, duration: float = None):
+    """Отправляет уведомление о сравнении цен"""
+    if not SETTINGS['DEX_CEX']['PRICE_CONVERGENCE_ENABLED']:
         return
 
-    convergence_threshold = SETTINGS[arb_type]['PRICE_CONVERGENCE_THRESHOLD']
+    convergence_threshold = SETTINGS['DEX_CEX']['PRICE_CONVERGENCE_THRESHOLD']
 
     if abs(spread) > convergence_threshold:
         return
 
-    previous_key = f"{arb_type}_{base}_{dex_data['dex_url']}_{cex_data['exchange']}"
-    if previous_key not in sent_arbitrage_opportunities:
+    # Проверяем, была ли эта связка ранее отправленной
+    key = f"DEX_CEX_{base}"
+    if key not in sent_arbitrage_opportunities:
         return
 
+    # Проверяем время последнего уведомления
     current_time = time.time()
-    notification_key = f"{arb_type}_{base}_{dex_data['dex_url']}_{cex_data['exchange']}"
+    notification_key = f"DEX_CEX_{base}"
 
     if (notification_key in last_convergence_notification and
             current_time - last_convergence_notification[notification_key] < 300):
@@ -244,71 +205,65 @@ async def send_price_convergence_notification(arb_type: str, base: str, dex_data
     utc_plus_3 = timezone(timedelta(hours=3))
     current_time_str = datetime.now(utc_plus_3).strftime('%H:%M:%S')
 
-    def format_volume(vol):
-        if vol is None:
-            return "N/A"
-        if vol >= 1_000_000:
-            return f"${vol / 1_000_000:.1f}M"
-        if vol >= 1_000:
-            return f"${vol / 1_000:.1f}K"
-        return f"${vol:.1f}"
-
-    dex_volume_str = format_volume(dex_data.get('volume'))
-    cex_volume_str = format_volume(cex_data.get('volume'))
+    # Форматируем данные DEX
+    dex_url = dex_data.get('url', f"https://dexscreener.com/{dex_data.get('chainId', '')}/{dex_data.get('pairAddress', '')}")
+    dex_chain = dex_data.get('chain', 'Unknown')
+    dex_liquidity = dex_data.get('liquidity', {}).get('usd', 0)
+    
+    liquidity_str = f"${dex_liquidity:,.0f}" if dex_liquidity else "N/A"
 
     duration_str = format_duration(duration) if duration is not None else "N/A"
 
     safe_base = html.escape(base)
 
+    # Определяем действие для закрытия
+    close_action = "Закрыть ШОРТ" if signal == "LONG" else "Закрыть ЛОНГ"
+
     message = (
-        f"🎯 <b>ЦЕНЫ СРАВНИЛИСЬ!</b> 🦄\n\n"
-        f"▫️ <b>Тип:</b> DEX-CEX арбитраж\n"
+        f"🎯 <b>ЦЕНЫ СРАВНИЛИСЬ! ПОРА ЗАКРЫВАТЬ СДЕЛКУ!</b>\n\n"
         f"▫️ <b>Монета:</b> <code>{safe_base}</code>\n"
-        f"▫️ <b>Направление:</b> {direction}\n"
         f"▫️ <b>Разница цен:</b> <code>{spread:.2f}%</code>\n"
+        f"▫️ <b>Сигнал был:</b> {signal}\n"
+        f"▫️ <b>Действие:</b> {close_action} на MEXC\n"
         f"▫️ <b>Длительность арбитража:</b> {duration_str}\n\n"
 
-        f"🟢 <b><a href='{dex_data['dex_url']}'>DEX (DexScreener)</a>:</b>\n"
-        f"   💰 Цена: <code>${dex_data['price']:.8f}</code>\n"
-        f"   📊 Объем: {dex_volume_str}\n"
-        f"   🌐 Сеть: {dex_data.get('network', 'N/A')}\n\n"
+        f"🟢 <b><a href='{dex_url}'>DEX (DexScreener)</a>:</b>\n"
+        f"   💰 Цена: <code>${dex_price:.8f}</code>\n"
+        f"   ⛓ Сеть: {dex_chain}\n"
+        f"   💧 Ликвидность: {liquidity_str}\n\n"
 
-        f"🔵 <b><a href='{cex_data['url']}'>CEX ({cex_data['exchange'].upper()})</a>:</b>\n"
-        f"   💰 Цена: <code>${cex_data['price']:.8f}</code>\n"
-        f"   📊 Объем: {cex_volume_str}\n\n"
+        f"🔵 <b><a href='https://futures.mexc.com/exchange/{safe_base}_USDT'>MEXC Futures</a>:</b>\n"
+        f"   💰 Цена: <code>${cex_price:.8f}</code>\n\n"
 
         f"⏰ <i>{current_time_str}</i>\n"
         f"🔔 <i>Уведомление о сходимости цен</i>"
     )
 
     await send_telegram_message(message)
-    logger.info(f"Отправлено уведомление о сходимости цен для {base}: {spread:.4f}%, длительность: {duration_str}")
+    logger.info(f"Отправлено уведомление о сходимости для {base}: {spread:.4f}%")
 
-    key = f"{arb_type}_{base}_{dex_data['dex_url']}_{cex_data['exchange']}"
+    # Удаляем связку из отслеживания
     if key in sent_arbitrage_opportunities:
         del sent_arbitrage_opportunities[key]
     if key in current_arbitrage_opportunities:
         del current_arbitrage_opportunities[key]
     if key in arbitrage_start_times:
         del arbitrage_start_times[key]
-    if key in previous_arbitrage_opportunities:
-        del previous_arbitrage_opportunities[key]
 
-    logger.info(f"Связка удалена из актуальных после сходимости цен: {key}")
-
-def update_arbitrage_duration(arb_type: str, base: str, dex_data: dict, cex_data: dict, spread: float):
+def update_arbitrage_duration(base: str, spread: float):
     """Обновляет время длительности арбитражной возможности"""
-    key = f"{arb_type}_{base}_{dex_data['dex_url']}_{cex_data['exchange']}"
+    key = f"DEX_CEX_{base}"
     current_time = time.time()
 
+    # Если связка активна и спред превышает порог - начинаем отсчет
     if (key in sent_arbitrage_opportunities and
-            SETTINGS[arb_type]['THRESHOLD_PERCENT'] <= abs(spread) <= SETTINGS[arb_type]['MAX_THRESHOLD_PERCENT'] and
+            SETTINGS['DEX_CEX']['THRESHOLD_PERCENT'] <= abs(spread) <= SETTINGS['DEX_CEX']['MAX_THRESHOLD_PERCENT'] and
             key not in arbitrage_start_times):
         arbitrage_start_times[key] = current_time
-        previous_arbitrage_opportunities[key] = True
         logger.debug(f"Начало арбитража для {key}")
 
-    elif (abs(spread) <= SETTINGS[arb_type]['PRICE_CONVERGENCE_THRESHOLD'] and
+    # Если спред упал ниже порога сходимости - вычисляем длительность
+    elif (abs(spread) <= SETTINGS['DEX_CEX']['PRICE_CONVERGENCE_THRESHOLD'] and
           key in arbitrage_start_times):
         start_time = arbitrage_start_times.pop(key)
         duration = current_time - start_time
@@ -317,176 +272,89 @@ def update_arbitrage_duration(arb_type: str, base: str, dex_data: dict, cex_data
 
     return None
 
-def update_current_arbitrage_opportunities(arb_type: str, base: str, dex_data: dict, cex_data: dict, spread: float,
-                                           direction: str, min_entry_amount: float = None, max_entry_amount: float = None,
-                                           profit_min: dict = None, profit_max: dict = None):
+def update_current_arbitrage_opportunities(base: str, dex_price: float, cex_price: float, 
+                                         spread: float, signal: str, dex_data: dict):
     """Обновляет информацию о текущих арбитражных возможностях"""
-    key = f"{arb_type}_{base}_{dex_data['dex_url']}_{cex_data['exchange']}"
+    key = f"DEX_CEX_{base}"
     current_time = time.time()
 
     if key in sent_arbitrage_opportunities:
         current_arbitrage_opportunities[key] = {
-            'arb_type': arb_type,
+            'arb_type': 'DEX_CEX',
             'base': base,
-            'dex_data': dex_data,
-            'cex_data': cex_data,
+            'dex_price': dex_price,
+            'cex_price': cex_price,
             'spread': spread,
-            'direction': direction,
-            'min_entry_amount': min_entry_amount,
-            'max_entry_amount': max_entry_amount,
-            'profit_min': profit_min,
-            'profit_max': profit_max,
+            'signal': signal,
+            'dex_data': dex_data,
+            'min_entry_amount': sent_arbitrage_opportunities[key].get('min_entry_amount'),
+            'max_entry_amount': sent_arbitrage_opportunities[key].get('max_entry_amount'),
+            'profit_min': sent_arbitrage_opportunities[key].get('profit_min'),
+            'profit_max': sent_arbitrage_opportunities[key].get('profit_max'),
             'start_time': sent_arbitrage_opportunities[key]['start_time'],
             'last_updated': current_time
         }
 
-async def get_current_arbitrage_opportunities():
-    """Возвращает форматированное сообщение с текущими арбитражными возможностями"""
-    cleanup_old_opportunities()
-
-    filtered_opportunities = {}
-    current_time = time.time()
-
-    for key, opportunity in sent_arbitrage_opportunities.items():
-        if (current_time - opportunity['last_updated']) <= 3600:
-            filtered_opportunities[key] = opportunity
-
-    if not filtered_opportunities:
-        return "📊 <b>Актуальные DEX-CEX связки</b>\n\n" \
-               "⏳ В данный момент активных арбитражных возможностей не обнаружено."
-
-    opportunities_list = []
-    for key, opportunity in filtered_opportunities.items():
-        duration = time.time() - opportunity['start_time']
-        opportunities_list.append({
-            'base': opportunity['base'],
-            'dex_data': opportunity['dex_data'],
-            'cex_data': opportunity['cex_data'],
-            'spread': opportunity['spread'],
-            'direction': opportunity['direction'],
-            'min_entry_amount': opportunity.get('min_entry_amount'),
-            'max_entry_amount': opportunity.get('max_entry_amount'),
-            'profit_min': opportunity.get('profit_min'),
-            'profit_max': opportunity.get('profit_max'),
-            'duration': duration
-        })
-
-    opportunities_list.sort(key=lambda x: x['spread'], reverse=True)
-
-    utc_plus_3 = timezone(timedelta(hours=3))
-    current_time_str = datetime.now(utc_plus_3).strftime('%H:%M:%S')
-
-    message = "📊 <b>Актуальные DEX-CEX связки</b>\n\n"
-
-    for opp in opportunities_list:
-        duration_str = format_duration(opp['duration'])
-
-        entry_amount_str = f"${opp['min_entry_amount']:.2f}-${opp['max_entry_amount']:.2f}" if opp.get(
-            'min_entry_amount') and opp.get('max_entry_amount') else "N/A"
-
-        profit_str = "N/A"
-        if opp.get('profit_min') and opp.get('profit_max'):
-            profit_min_net = opp['profit_min'].get('net', 0)
-            profit_max_net = opp['profit_max'].get('net', 0)
-            profit_str = f"${profit_min_net:.2f}-${profit_max_net:.2f}"
-
-        message += (
-            f"▫️ <code>{opp['base']}</code>: {opp['spread']:.2f}%\n"
-            f"   🦄 DEX → 📊 {opp['cex_data']['exchange'].upper()}\n"
-            f"   📈 Направление: {opp['direction']}\n"
-            f"   💰 Сумма входа: {entry_amount_str}\n"
-            f"   💵 Прибыль: {profit_str}\n"
-            f"   ⏱ Длительность: {duration_str}\n\n"
-        )
-
-    message += f"⏰ <i>Обновлено: {current_time_str}</i>\n"
-    message += f"📈 <i>Всего активных связок: {len(filtered_opportunities)}</i>"
-
-    return message
-
-def cleanup_old_opportunities():
-    """Очищает устаревшие арбитражные возможности"""
-    current_time = time.time()
-    keys_to_remove = []
-
-    for key, opportunity in sent_arbitrage_opportunities.items():
-        if current_time - opportunity['last_updated'] > 3600:
-            keys_to_remove.append(key)
-
-    for key in keys_to_remove:
-        del sent_arbitrage_opportunities[key]
-        if key in current_arbitrage_opportunities:
-            del current_arbitrage_opportunities[key]
-        if key in arbitrage_start_times:
-            del arbitrage_start_times[key]
-        logger.debug(f"Удалена устаревшая связка: {key}")
-
-async def fetch_dex_pairs():
-    """Получает список пар с DexScreener"""
+async def get_dex_screener_pairs():
+    """Получает пары с DexScreener с фильтрацией по ликвидности"""
+    url = "https://api.dexscreener.com/latest/dex/tokens/now"
+    
     try:
         async with aiohttp.ClientSession() as session:
-            # Получаем топ-200 пар по объему
-            async with session.get('https://api.dexscreener.com/latest/dex/volumes?limit=200') as response:
+            async with session.get(url, timeout=30) as response:
                 if response.status == 200:
                     data = await response.json()
                     pairs = data.get('pairs', [])
                     
-                    # Фильтруем только пары с USDT и достаточным объемом
+                    # Фильтруем пары по ликвидности и объему
                     filtered_pairs = []
                     for pair in pairs:
-                        if (pair.get('quoteToken', {}).get('symbol') == 'USDT' and
-                            pair.get('volume', {}).get('h24', 0) >= SETTINGS['DEX_CEX']['MIN_VOLUME_USD']):
-                            filtered_pairs.append(pair)
+                        try:
+                            liquidity_usd = pair.get('liquidity', {}).get('usd', 0)
+                            volume_h24 = pair.get('volume', {}).get('h24', 0)
+                            
+                            if (liquidity_usd >= SETTINGS['DEX_CEX']['MIN_LIQUIDITY_USD'] and
+                                volume_h24 >= SETTINGS['DEX_CEX']['MIN_VOLUME_USD']):
+                                
+                                # Извлекаем базовый символ (убираем .e и подобные суффиксы)
+                                base_symbol = pair['baseToken']['symbol'].upper()
+                                base_symbol = re.sub(r'\.\w+$', '', base_symbol)  # Убираем суффиксы типа .e
+                                
+                                # Пропускаем пары с неподходящими символами
+                                if not re.match(r'^[A-Z0-9]{2,15}$', base_symbol):
+                                    continue
+                                
+                                filtered_pairs.append({
+                                    'baseSymbol': base_symbol,
+                                    'price': float(pair['priceNative']),
+                                    'liquidity': {'usd': liquidity_usd},
+                                    'volume': {'h24': volume_h24},
+                                    'chain': pair.get('chain', 'Unknown'),
+                                    'pairAddress': pair.get('pairAddress'),
+                                    'chainId': pair.get('chainId'),
+                                    'url': pair.get('url', f"https://dexscreener.com/{pair.get('chainId', '')}/{pair.get('pairAddress', '')}")
+                                })
+                                
+                                # Ограничиваем количество пар для мониторинга
+                                if len(filtered_pairs) >= SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']:
+                                    break
+                                
+                        except Exception as e:
+                            logger.warning(f"Ошибка обработки пары с DexScreener: {e}")
+                            continue
                     
-                    logger.info(f"Получено {len(filtered_pairs)} пар с DexScreener")
+                    logger.info(f"Загружено {len(filtered_pairs)} пар с DexScreener")
                     return filtered_pairs
                 else:
-                    logger.error(f"Ошибка получения данных DexScreener: {response.status}")
+                    logger.error(f"Ошибка API DexScreener: {response.status}")
                     return []
     except Exception as e:
-        logger.error(f"Ошибка получения пар DexScreener: {e}")
+        logger.error(f"Ошибка получения данных с DexScreener: {e}")
         return []
-
-async def fetch_ticker_data(exchange, symbol: str):
-    """Получает данные тикера с биржи"""
-    try:
-        ticker = await asyncio.get_event_loop().run_in_executor(
-            None, exchange.fetch_ticker, symbol
-        )
-
-        if ticker:
-            price = float(ticker['last']) if ticker.get('last') else None
-            volume = None
-            if ticker.get('quoteVolume') is not None:
-                volume = float(ticker['quoteVolume'])
-            elif ticker.get('baseVolume') is not None and price:
-                volume = float(ticker['baseVolume']) * price
-
-            logger.debug(f"Данные тикера {symbol} на {exchange.id}: цена={price}, объем={volume}")
-
-            return {
-                'price': price,
-                'volume': volume,
-                'symbol': symbol
-            }
-        return None
-    except Exception as e:
-        logger.warning(f"Ошибка данных {symbol} на {exchange.id}: {e}")
-        return None
-
-def load_markets_sync(exchange):
-    """Синхронная загрузка рынков"""
-    try:
-        exchange.load_markets()
-        logger.info(f"Рынки загружены для {exchange.id}")
-        return exchange
-    except Exception as e:
-        logger.error(f"Ошибка загрузки {exchange.id}: {e}")
-        return None
 
 async def load_futures_exchanges():
     """Загружает фьючерсные биржи"""
-    global FUTURES_EXCHANGES_LOADED, LAST_EXCHANGE_SETTINGS
+    global FUTURES_EXCHANGES_LOADED
 
     exchanges = {}
     for name, config in FUTURES_EXCHANGES.items():
@@ -495,11 +363,10 @@ async def load_futures_exchanges():
 
         try:
             exchange = await asyncio.get_event_loop().run_in_executor(
-                None, load_markets_sync, config["api"]
-            )
+                None, config["api"].load_markets)
             if exchange:
                 exchanges[name] = {
-                    "api": exchange,
+                    "api": config["api"],
                     "config": config
                 }
                 logger.info(f"{name.upper()} успешно загружена")
@@ -507,23 +374,33 @@ async def load_futures_exchanges():
             logger.error(f"Ошибка инициализации {name}: {e}")
 
     FUTURES_EXCHANGES_LOADED = exchanges
-    LAST_EXCHANGE_SETTINGS = SETTINGS['EXCHANGES'].copy()
     return exchanges
 
-def calculate_min_entry_amount(buy_price: float, sell_price: float, min_profit: float, buy_fee_percent: float,
-                               sell_fee_percent: float) -> float:
-    """Рассчитывает минимальную сумму входа"""
-    profit_per_unit = sell_price * (1 - sell_fee_percent) - buy_price * (1 + buy_fee_percent)
-    if profit_per_unit <= 0:
-        return 0
-    min_amount = min_profit / profit_per_unit
-    return min_amount * buy_price
+async def fetch_cex_price(symbol: str):
+    """Получает цену с MEXC фьючерсов"""
+    try:
+        if "mexc" not in FUTURES_EXCHANGES_LOADED:
+            return None
+            
+        exchange = FUTURES_EXCHANGES_LOADED["mexc"]["api"]
+        futures_symbol = FUTURES_EXCHANGES_LOADED["mexc"]["config"]["symbol_format"](symbol)
+        
+        try:
+            ticker = await asyncio.get_event_loop().run_in_executor(
+                None, exchange.fetch_ticker, futures_symbol)
+            return float(ticker['last']) if ticker and ticker.get('last') else None
+        except ccxt.BadSymbol:
+            # Пара не найдена на фьючерсах
+            return None
+            
+    except Exception as e:
+        logger.warning(f"Ошибка получения цены {symbol} на MEXC: {e}")
+        return None
 
-def calculate_profit(buy_price: float, sell_price: float, amount: float, buy_fee_percent: float,
-                     sell_fee_percent: float) -> dict:
-    """Рассчитывает прибыль"""
-    buy_cost = amount * buy_price * (1 + buy_fee_percent)
-    sell_revenue = amount * sell_price * (1 - sell_fee_percent)
+def calculate_profit(buy_price: float, sell_price: float, amount: float, fee_percent: float = 0.0006) -> dict:
+    """Рассчитывает прибыль для арбитража"""
+    buy_cost = amount * buy_price * (1 + fee_percent)
+    sell_revenue = amount * sell_price * (1 - fee_percent)
     net_profit = sell_revenue - buy_cost
     profit_percent = (net_profit / buy_cost) * 100 if buy_cost > 0 else 0
 
@@ -534,34 +411,24 @@ def calculate_profit(buy_price: float, sell_price: float, amount: float, buy_fee
     }
 
 async def check_dex_cex_arbitrage():
-    """Проверка DEX-CEX арбитража между DexScreener и MEXC фьючерсами"""
+    """Основная функция проверки DEX-CEX арбитража"""
     logger.info("Запуск проверки DEX-CEX арбитража")
 
     if not SETTINGS['DEX_CEX']['ENABLED']:
         logger.info("DEX-CEX арбитраж отключен в настройках")
         return
 
-    # Инициализация бирж
+    # Загружаем фьючерсные биржи
     await load_futures_exchanges()
 
     if not FUTURES_EXCHANGES_LOADED:
-        logger.error("MEXC не загружена")
+        logger.error("MEXC фьючерсы не загружены")
         return
 
     while SETTINGS['DEX_CEX']['ENABLED']:
         try:
-            # Проверяем, изменились ли настройки бирж
-            if LAST_EXCHANGE_SETTINGS != SETTINGS['EXCHANGES']:
-                logger.info("Обнаружено изменение настроек бирж. Перезагружаем биржи...")
-                await load_futures_exchanges()
-
-                if not FUTURES_EXCHANGES_LOADED:
-                    logger.error("MEXC не загружена после перезагрузки")
-                    await asyncio.sleep(SETTINGS['DEX_CEX']['CHECK_INTERVAL'])
-                    continue
-
             # Получаем пары с DexScreener
-            dex_pairs = await fetch_dex_pairs()
+            dex_pairs = await get_dex_screener_pairs()
             if not dex_pairs:
                 logger.warning("Не удалось получить пары с DexScreener")
                 await asyncio.sleep(SETTINGS['DEX_CEX']['CHECK_INTERVAL'])
@@ -569,182 +436,135 @@ async def check_dex_cex_arbitrage():
 
             found_opportunities = 0
             
-            for dex_pair in dex_pairs:
+            # Группируем пары по символу, выбираем самую ликвидную для каждого символа
+            pairs_by_symbol = {}
+            for pair in dex_pairs:
+                symbol = pair['baseSymbol']
+                if symbol not in pairs_by_symbol or pair['liquidity']['usd'] > pairs_by_symbol[symbol]['liquidity']['usd']:
+                    pairs_by_symbol[symbol] = pair
+
+            # Проверяем арбитраж для каждой пары
+            for symbol, dex_data in pairs_by_symbol.items():
                 try:
-                    base_symbol = dex_pair['baseToken']['symbol']
-                    dex_price = float(dex_pair.get('priceUsd', 0))
-                    dex_volume = float(dex_pair.get('volume', {}).get('h24', 0))
-                    dex_url = dex_pair.get('url', '')
-                    network = dex_pair.get('chainId', 'N/A')
-
-                    if dex_price <= 0:
+                    dex_price = dex_data['price']
+                    cex_price = await fetch_cex_price(symbol)
+                    
+                    if not cex_price or dex_price == 0:
                         continue
-
-                    # Ищем соответствующую пару на MEXC
-                    mexc_data = FUTURES_EXCHANGES_LOADED['mexc']
-                    symbol = mexc_data["config"]["symbol_format"](base_symbol)
-
-                    try:
-                        # Проверяем существование рынка
-                        market = mexc_data["api"].market(symbol)
-                        if not mexc_data["config"]["is_futures"](market):
-                            continue
-                    except Exception:
-                        # Рынок не найден, пропускаем
-                        continue
-
-                    # Получаем цену с MEXC
-                    cex_ticker = await fetch_ticker_data(mexc_data["api"], symbol)
-                    if not cex_ticker or not cex_ticker['price']:
-                        continue
-
-                    cex_price = cex_ticker['price']
-                    cex_volume = cex_ticker.get('volume')
 
                     # Рассчитываем спред
-                    spread = (dex_price - cex_price) / cex_price * 100
-
-                    # Определяем направление арбитража
-                    if spread > 0:
-                        direction = "Лонг CEX / Шорт DEX"
-                        buy_price = cex_price
-                        sell_price = dex_price
-                        buy_fee = SETTINGS['DEX_CEX']['CEX_TAKER_FEE']
-                        sell_fee = SETTINGS['DEX_CEX']['DEX_TAKER_FEE']
+                    spread = ((dex_price - cex_price) / cex_price) * 100
+                    
+                    # Определяем сигнал
+                    if dex_price > cex_price:
+                        signal = "LONG"  # Покупка на DEX, Шорт на CEX
+                        action = "ШОРТ на MEXC"
                     else:
-                        direction = "Шорт CEX / Лонг DEX"
-                        buy_price = dex_price
-                        sell_price = cex_price
-                        buy_fee = SETTINGS['DEX_CEX']['DEX_TAKER_FEE']
-                        sell_fee = SETTINGS['DEX_CEX']['CEX_TAKER_FEE']
-
+                        signal = "SHORT"  # Продажа на DEX, Лонг на CEX  
+                        action = "ЛОНГ на MEXC"
+                    
                     abs_spread = abs(spread)
-
-                    # Подготавливаем данные
-                    dex_data = {
-                        'price': dex_price,
-                        'volume': dex_volume,
-                        'dex_url': dex_url,
-                        'network': network
-                    }
-
-                    cex_data = {
-                        'price': cex_price,
-                        'volume': cex_volume,
-                        'exchange': 'mexc',
-                        'url': mexc_data["config"]["url_format"](symbol.replace(':USDT', ''))
-                    }
-
-                    # Обновляем информацию о текущих арбитражных возможностях
+                    
+                    # Обновляем текущие возможности
                     update_current_arbitrage_opportunities(
-                        'DEX_CEX', base_symbol, dex_data, cex_data, spread,
-                        direction
+                        symbol, dex_price, cex_price, spread, signal, dex_data
                     )
 
-                    # Проверяем сходимость цен для уведомления
-                    duration = update_arbitrage_duration('DEX_CEX', base_symbol, dex_data, cex_data, spread)
+                    # Проверяем сходимость цен
+                    duration = update_arbitrage_duration(symbol, spread)
                     if duration is not None:
                         await send_price_convergence_notification(
-                            'DEX_CEX', base_symbol, dex_data, cex_data,
-                            spread, direction, duration
+                            symbol, dex_price, cex_price, spread, signal, dex_data, duration
                         )
 
+                    # Проверяем порог для нового арбитража
                     if (SETTINGS['DEX_CEX']['THRESHOLD_PERCENT'] <= abs_spread <= 
                         SETTINGS['DEX_CEX']['MAX_THRESHOLD_PERCENT']):
                         
-                        # Рассчитываем минимальную сумму для MIN_NET_PROFIT_USD
-                        min_amount_for_profit = calculate_min_entry_amount(
-                            buy_price=buy_price,
-                            sell_price=sell_price,
-                            min_profit=SETTINGS['DEX_CEX']['MIN_NET_PROFIT_USD'],
-                            buy_fee_percent=buy_fee,
-                            sell_fee_percent=sell_fee
-                        )
+                        # Рассчитываем прибыль
+                        fee = FUTURES_EXCHANGES_LOADED["mexc"]["config"]["taker_fee"]
+                        
+                        # Для LONG: покупаем на DEX по dex_price, продаем на CEX по cex_price
+                        # Для SHORT: продаем на DEX по dex_price, покупаем на CEX по cex_price
+                        
+                        if signal == "LONG":
+                            buy_price = dex_price
+                            sell_price = cex_price
+                        else:  # SHORT
+                            buy_price = cex_price
+                            sell_price = dex_price
 
+                        # Рассчитываем минимальную сумму для прибыли
+                        min_amount_for_profit = (SETTINGS['DEX_CEX']['MIN_NET_PROFIT_USD'] / 
+                                               (sell_price * (1 - fee) - buy_price * (1 + fee)))
+                        
                         if min_amount_for_profit <= 0:
                             continue
 
-                        # Рассчитываем максимально возможную сумму входа
+                        # Рассчитываем суммы входа
+                        min_entry_amount = max(min_amount_for_profit * buy_price, 
+                                             SETTINGS['DEX_CEX']['MIN_ENTRY_AMOUNT_USDT'])
                         max_entry_amount = SETTINGS['DEX_CEX']['MAX_ENTRY_AMOUNT_USDT']
-                        min_entry_amount = max(min_amount_for_profit, SETTINGS['DEX_CEX']['MIN_ENTRY_AMOUNT_USDT'])
 
                         if min_entry_amount > max_entry_amount:
                             continue
 
-                        # Рассчитываем прибыль
-                        profit_min = calculate_profit(
-                            buy_price=buy_price,
-                            sell_price=sell_price,
-                            amount=min_entry_amount / buy_price,
-                            buy_fee_percent=buy_fee,
-                            sell_fee_percent=sell_fee
-                        )
+                        # Рассчитываем прибыль для min и max сумм
+                        amount_min = min_entry_amount / buy_price
+                        amount_max = max_entry_amount / buy_price
 
-                        profit_max = calculate_profit(
-                            buy_price=buy_price,
-                            sell_price=sell_price,
-                            amount=max_entry_amount / buy_price,
-                            buy_fee_percent=buy_fee,
-                            sell_fee_percent=sell_fee
-                        )
+                        profit_min = calculate_profit(buy_price, sell_price, amount_min, fee)
+                        profit_max = calculate_profit(buy_price, sell_price, amount_max, fee)
+
+                        if profit_min['net'] < SETTINGS['DEX_CEX']['MIN_NET_PROFIT_USD']:
+                            continue
 
                         # Форматируем сообщение
                         utc_plus_3 = timezone(timedelta(hours=3))
                         current_time = datetime.now(utc_plus_3).strftime('%H:%M:%S')
 
-                        def format_volume(vol):
-                            if vol is None:
-                                return "N/A"
-                            if vol >= 1_000_000:
-                                return f"${vol / 1_000_000:.1f}M"
-                            if vol >= 1_000:
-                                return f"${vol / 1_000:.1f}K"
-                            return f"${vol:.1f}"
+                        safe_symbol = html.escape(symbol)
+                        dex_url = dex_data['url']
+                        mexc_url = f"https://futures.mexc.com/exchange/{symbol}_USDT"
 
-                        dex_volume_str = format_volume(dex_volume)
-                        cex_volume_str = format_volume(cex_volume)
-
-                        safe_base = html.escape(base_symbol)
+                        liquidity_str = f"${dex_data['liquidity']['usd']:,.0f}" if dex_data['liquidity']['usd'] else "N/A"
 
                         message = (
-                            f"🦄 <b>DEX-CEX Арбитраж:</b> <code>{safe_base}</code>\n"
-                            f"▫️ <b>Разница цен:</b> {spread:.2f}%\n"
-                            f"▫️ <b>Направление:</b> {direction}\n"
+                            f"🔄 <b>DEX-CEX АРБИТРАЖ</b>\n\n"
+                            f"▫️ <b>Монета:</b> <code>{safe_symbol}</code>\n"
+                            f"▫️ <b>Разница цен:</b> {abs_spread:.2f}%\n"
+                            f"▫️ <b>Сигнал:</b> {signal}\n"
+                            f"▫️ <b>Действие:</b> {action}\n"
                             f"▫️ <b>Сумма входа:</b> ${min_entry_amount:.2f}-${max_entry_amount:.2f}\n\n"
                             
                             f"🟢 <b><a href='{dex_url}'>DEX (DexScreener)</a>:</b>\n"
                             f"   💰 Цена: <code>${dex_price:.8f}</code>\n"
-                            f"   📊 Объем: {dex_volume_str}\n"
-                            f"   🌐 Сеть: {network}\n"
-                            f"   💸 Комиссия: {SETTINGS['DEX_CEX']['DEX_TAKER_FEE']*100:.2f}%\n\n"
+                            f"   ⛓ Сеть: {dex_data['chain']}\n"
+                            f"   💧 Ликвидность: {liquidity_str}\n\n"
                             
-                            f"🔵 <b><a href='{cex_data['url']}'>CEX (MEXC Futures)</a>:</b>\n"
+                            f"🔵 <b><a href='{mexc_url}'>MEXC Futures</a>:</b>\n"
                             f"   💰 Цена: <code>${cex_price:.8f}</code>\n"
-                            f"   📊 Объем: {cex_volume_str}\n"
-                            f"   💸 Комиссия: {SETTINGS['DEX_CEX']['CEX_TAKER_FEE']*100:.3f}%\n\n"
+                            f"   📊 Комиссия: {fee * 100:.3f}%\n\n"
                             
-                            f"💰 <b>Чистая прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f} ({profit_max['percent']:.2f}%)\n\n"
+                            f"💰 <b>Чистая прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f}\n\n"
                             f"⏱ {current_time}\n"
                         )
 
-                        logger.info(f"Найдена DEX-CEX арбитражная возможность: {base_symbol} ({spread:.2f}%)")
+                        logger.info(f"Найдена DEX-CEX возможность: {symbol} ({abs_spread:.2f}%)")
 
-                        # Отправляем сообщение в Telegram
+                        # Отправляем сообщение
                         await send_telegram_message(message)
 
-                        # Добавляем связку в отправленные возможности
+                        # Добавляем в отслеживание
                         add_opportunity_to_sent(
-                            'DEX_CEX', base_symbol, dex_data, cex_data, spread,
-                            direction, min_entry_amount, max_entry_amount, profit_min, profit_max
+                            symbol, dex_price, cex_price, spread, signal, dex_data,
+                            min_entry_amount, max_entry_amount, profit_min, profit_max
                         )
 
                         found_opportunities += 1
 
                 except Exception as e:
-                    logger.error(f"Ошибка обработки пары {dex_pair.get('baseToken', {}).get('symbol', 'Unknown')}: {e}")
-
-            # Очищаем устаревшие возможности
-            cleanup_old_opportunities()
+                    logger.error(f"Ошибка обработки пары {symbol}: {e}")
 
             logger.info(f"Цикл DEX-CEX арбитража завершен. Найдено возможностей: {found_opportunities}")
             await asyncio.sleep(SETTINGS['DEX_CEX']['CHECK_INTERVAL'])
@@ -753,6 +573,62 @@ async def check_dex_cex_arbitrage():
             logger.error(f"Ошибка в основном цикле DEX-CEX арбитража: {e}")
             await asyncio.sleep(60)
 
+async def get_current_arbitrage_opportunities():
+    """Возвращает текущие арбитражные возможности"""
+    current_time = time.time()
+    
+    # Очищаем устаревшие возможности (старше 1 часа)
+    keys_to_remove = []
+    for key, opportunity in sent_arbitrage_opportunities.items():
+        if current_time - opportunity['last_updated'] > 3600:
+            keys_to_remove.append(key)
+    
+    for key in keys_to_remove:
+        del sent_arbitrage_opportunities[key]
+        if key in current_arbitrage_opportunities:
+            del current_arbitrage_opportunities[key]
+
+    if not sent_arbitrage_opportunities:
+        return "📊 <b>Актуальные DEX-CEX связки</b>\n\n" \
+               "⏳ В данный момент активных арбитражных возможностей не обнаружено."
+
+    # Сортируем по спреду (по убыванию)
+    sorted_opportunities = sorted(
+        sent_arbitrage_opportunities.values(), 
+        key=lambda x: abs(x['spread']), 
+        reverse=True
+    )
+
+    utc_plus_3 = timezone(timedelta(hours=3))
+    current_time_str = datetime.now(utc_plus_3).strftime('%H:%M:%S')
+
+    message = "📊 <b>Актуальные DEX-CEX связки</b>\n\n"
+
+    for opp in sorted_opportunities:
+        duration = time.time() - opp['start_time']
+        duration_str = format_duration(duration)
+
+        entry_amount_str = f"${opp['min_entry_amount']:.2f}-${opp['max_entry_amount']:.2f}" if opp.get('min_entry_amount') and opp.get('max_entry_amount') else "N/A"
+
+        profit_str = "N/A"
+        if opp.get('profit_min') and opp.get('profit_max'):
+            profit_min_net = opp['profit_min'].get('net', 0)
+            profit_max_net = opp['profit_max'].get('net', 0)
+            profit_str = f"${profit_min_net:.2f}-${profit_max_net:.2f}"
+
+        message += (
+            f"▫️ <code>{opp['base']}</code>: {abs(opp['spread']):.2f}% ({opp['signal']})\n"
+            f"   💰 Сумма входа: {entry_amount_str}\n"
+            f"   💵 Прибыль: {profit_str}\n"
+            f"   ⏱ Длительность: {duration_str}\n\n"
+        )
+
+    message += f"⏰ <i>Обновлено: {current_time_str}</i>\n"
+    message += f"📈 <i>Всего активных связок: {len(sorted_opportunities)}</i>"
+
+    return message
+
+# Обработчики Telegram команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
     user_id = str(update.effective_user.id)
@@ -762,7 +638,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🤖 <b>DEX-CEX Arbitrage Bot</b>\n\n"
-        "Мониторинг арбитражных возможностей между DEX (DexScreener) и CEX (MEXC Futures)\n\n"
+        "Арбитраж между DexScreener (DEX) и MEXC Futures (CEX)\n\n"
         "Используйте кнопки ниже для взаимодействия с ботом:",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
@@ -792,7 +668,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         response = await get_current_arbitrage_opportunities()
-
         await update.message.reply_text(
             text=response,
             parse_mode="HTML",
@@ -803,14 +678,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == "📊 Статус бота":
         dex_cex_status = "✅ ВКЛ" if SETTINGS['DEX_CEX']['ENABLED'] else "❌ ВЫКЛ"
-        enabled_exchanges = [name for name, config in SETTINGS['EXCHANGES'].items() if config['ENABLED']]
-        exchanges_status = ", ".join(enabled_exchanges) if enabled_exchanges else "Нет активных бирж"
+        active_opportunities = len(sent_arbitrage_opportunities)
 
         await update.message.reply_text(
             f"🤖 <b>Статус бота</b>\n\n"
-            f"🦄 DEX-CEX арбитраж: {dex_cex_status}\n"
-            f"🏛 Активные биржи: {exchanges_status}\n"
-            f"📈 Активных связок: {len(sent_arbitrage_opportunities)}",
+            f"🔄 DEX-CEX арбитраж: {dex_cex_status}\n"
+            f"🏛 Активные биржи: MEXC Futures\n"
+            f"📈 Активных связок: {active_opportunities}\n"
+            f"⚡ Мониторинг пар: {SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']}",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -819,20 +694,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "ℹ️ Помощь":
         await update.message.reply_text(
             "🤖 <b>DEX-CEX Arbitrage Bot</b>\n\n"
-            "🔍 <b>Арбитражная стратегия:</b>\n"
-            "• Если цена на DEX > CEX: Лонг на CEX / Шорт на DEX\n"
-            "• Если цена на DEX < CEX: Шорт на CEX / Лонг на DEX\n\n"
-            "📊 <b>Функционал:</b>\n"
-            "• Автоматический поиск арбитражных возможностей\n"
-            "• Уведомления о появлении и закрытии арбитража\n"
-            "• Отслеживание длительности арбитражных сделок\n"
-            "• Настройка параметров арбитража\n\n"
-            "⚙️ <b>Основные настройки:</b>\n"
-            "• Порог арбитража (минимальная разница цен)\n"
-            "• Минимальный объем торгов\n"
-            "• Суммы входа и ожидаемая прибыль\n"
-            "• Комиссии DEX/CEX\n"
-            "• Уведомления о схождении цен",
+            "🔍 <b>Как это работает:</b>\n"
+            "• Бот мониторит цены на DexScreener (DEX) и MEXC Futures (CEX)\n"
+            "• При обнаружении разницы цен отправляет сигнал:\n"
+            "  🟢 LONG: Цена на DEX выше - ШОРТ на MEXC\n"
+            "  🔴 SHORT: Цена на DEX ниже - ЛОНГ на MEXC\n"
+            "• При сходимости цен отправляет уведомление о закрытии сделки\n\n"
+            "📊 <b>Актуальные связки</b> - текущие арбитражные возможности\n"
+            "🔧 <b>Настройки</b> - параметры арбитража\n"
+            "📊 <b>Статус бота</b> - текущее состояние\n\n"
+            "⚡ <i>Бот работает полностью автоматически</i>",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -847,35 +718,13 @@ async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка меню настроек"""
     text = update.message.text
 
-    if text == "🦄 DEX-CEX Арбитраж":
+    if text == "🔄 DEX-CEX Арбитраж":
         await update.message.reply_text(
-            "🦄 <b>Настройки DEX-CEX арбитража</b>\n\nВыберите параметр для изменения:",
+            "🔄 <b>Настройки DEX-CEX арбитража</b>\n\nВыберите параметр для изменения:",
             parse_mode="HTML",
             reply_markup=get_dex_cex_settings_keyboard()
         )
         return DEX_CEX_SETTINGS
-
-    elif text == "🏛 Биржи":
-        await update.message.reply_text(
-            "🏛 <b>Настройки бирж</b>\n\nВыберите биржу для включения/выключения:",
-            parse_mode="HTML",
-            reply_markup=get_exchange_settings_keyboard()
-        )
-        return SETTINGS_MENU
-
-    elif text == "🔄 Сброс":
-        global SETTINGS, LAST_EXCHANGE_SETTINGS
-        SETTINGS = {
-            "DEX_CEX": DEFAULT_DEX_CEX_SETTINGS.copy(),
-            "EXCHANGES": EXCHANGE_SETTINGS.copy()
-        }
-        save_settings(SETTINGS)
-        LAST_EXCHANGE_SETTINGS = None
-        await update.message.reply_text(
-            "✅ Настройки сброшены к значениям по умолчанию",
-            reply_markup=get_settings_keyboard()
-        )
-        return SETTINGS_MENU
 
     elif text == "🔙 Главное меню":
         await update.message.reply_text(
@@ -924,10 +773,24 @@ async def handle_dex_cex_settings(update: Update, context: ContextTypes.DEFAULT_
         )
         return SETTING_VALUE
 
+    elif text.startswith("Лимидность:"):
+        context.user_data['setting'] = ('DEX_CEX', 'MIN_LIQUIDITY_USD')
+        await update.message.reply_text(
+            f"Введите новое значение для минимальной ликвидности (текущее: ${SETTINGS['DEX_CEX']['MIN_LIQUIDITY_USD']}):"
+        )
+        return SETTING_VALUE
+
     elif text.startswith("Объем:"):
         context.user_data['setting'] = ('DEX_CEX', 'MIN_VOLUME_USD')
         await update.message.reply_text(
             f"Введите новое значение для минимального объема (текущее: ${SETTINGS['DEX_CEX']['MIN_VOLUME_USD']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Пары:"):
+        context.user_data['setting'] = ('DEX_CEX', 'MAX_PAIRS_TO_MONITOR')
+        await update.message.reply_text(
+            f"Введите новое значение для максимального количества пар (текущее: {SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']}):"
         )
         return SETTING_VALUE
 
@@ -952,20 +815,6 @@ async def handle_dex_cex_settings(update: Update, context: ContextTypes.DEFAULT_
         )
         return SETTING_VALUE
 
-    elif text.startswith("DEX комиссия:"):
-        context.user_data['setting'] = ('DEX_CEX', 'DEX_TAKER_FEE')
-        await update.message.reply_text(
-            f"Введите новое значение для DEX комиссии (текущее: {SETTINGS['DEX_CEX']['DEX_TAKER_FEE']*100}%):"
-        )
-        return SETTING_VALUE
-
-    elif text.startswith("CEX комиссия:"):
-        context.user_data['setting'] = ('DEX_CEX', 'CEX_TAKER_FEE')
-        await update.message.reply_text(
-            f"Введите новое значение для CEX комиссии (текущее: {SETTINGS['DEX_CEX']['CEX_TAKER_FEE']*100}%):"
-        )
-        return SETTING_VALUE
-
     elif text.startswith("Сходимость:"):
         context.user_data['setting'] = ('DEX_CEX', 'PRICE_CONVERGENCE_THRESHOLD')
         await update.message.reply_text(
@@ -975,7 +824,6 @@ async def handle_dex_cex_settings(update: Update, context: ContextTypes.DEFAULT_
 
     elif text.startswith("Увед. сравн.:"):
         SETTINGS['DEX_CEX']['PRICE_CONVERGENCE_ENABLED'] = not SETTINGS['DEX_CEX']['PRICE_CONVERGENCE_ENABLED']
-        save_settings(SETTINGS)
         status = "🔔 ВКЛ" if SETTINGS['DEX_CEX']['PRICE_CONVERGENCE_ENABLED'] else "🔕 ВЫКЛ"
         await update.message.reply_text(
             f"✅ Уведомления о сравнении цен {status}",
@@ -985,7 +833,6 @@ async def handle_dex_cex_settings(update: Update, context: ContextTypes.DEFAULT_
 
     elif text.startswith("Статус:"):
         SETTINGS['DEX_CEX']['ENABLED'] = not SETTINGS['DEX_CEX']['ENABLED']
-        save_settings(SETTINGS)
         status = "ВКЛ" if SETTINGS['DEX_CEX']['ENABLED'] else "ВЫКЛ"
         await update.message.reply_text(
             f"✅ DEX-CEX арбитраж {status}",
@@ -998,37 +845,6 @@ async def handle_dex_cex_settings(update: Update, context: ContextTypes.DEFAULT_
         reply_markup=get_dex_cex_settings_keyboard()
     )
     return DEX_CEX_SETTINGS
-
-async def handle_exchange_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка настроек бирж"""
-    text = update.message.text
-
-    if text == "🔙 Назад в настройки":
-        await update.message.reply_text(
-            "⚙️ <b>Настройки бота</b>\n\nВыберите категорию:",
-            parse_mode="HTML",
-            reply_markup=get_settings_keyboard()
-        )
-        return SETTINGS_MENU
-
-    # Обработка включения/выключения бирж
-    for exchange in SETTINGS['EXCHANGES'].keys():
-        if text.startswith(f"{exchange}:"):
-            SETTINGS['EXCHANGES'][exchange]['ENABLED'] = not SETTINGS['EXCHANGES'][exchange]['ENABLED']
-            save_settings(SETTINGS)
-
-            status = "✅ ВКЛ" if SETTINGS['EXCHANGES'][exchange]['ENABLED'] else "❌ ВЫКЛ"
-            await update.message.reply_text(
-                f"✅ Биржа {exchange.upper()} {status}",
-                reply_markup=get_exchange_settings_keyboard()
-            )
-            return SETTINGS_MENU
-
-    await update.message.reply_text(
-        "Неизвестная команда. Используйте кнопки меню.",
-        reply_markup=get_exchange_settings_keyboard()
-    )
-    return SETTINGS_MENU
 
 async def handle_setting_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ввода значения настройки"""
@@ -1046,22 +862,18 @@ async def handle_setting_value(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         # Обработка числовых значений
-        if setting_key in ['THRESHOLD_PERCENT', 'MAX_THRESHOLD_PERCENT', 'PRICE_CONVERGENCE_THRESHOLD',
-                          'DEX_TAKER_FEE', 'CEX_TAKER_FEE']:
+        if setting_key in ['THRESHOLD_PERCENT', 'MAX_THRESHOLD_PERCENT', 'PRICE_CONVERGENCE_THRESHOLD']:
             value = float(text)
-            # Для комиссий преобразуем из процентов в десятичные
-            if setting_key in ['DEX_TAKER_FEE', 'CEX_TAKER_FEE']:
-                value = value / 100
-        elif setting_key in ['CHECK_INTERVAL']:
+        elif setting_key in ['CHECK_INTERVAL', 'MAX_PAIRS_TO_MONITOR']:
             value = int(text)
-        elif setting_key in ['MIN_VOLUME_USD', 'MIN_ENTRY_AMOUNT_USDT', 'MAX_ENTRY_AMOUNT_USDT', 'MIN_NET_PROFIT_USD']:
+        elif setting_key in ['MIN_LIQUIDITY_USD', 'MIN_VOLUME_USD', 'MIN_ENTRY_AMOUNT_USDT', 
+                           'MAX_ENTRY_AMOUNT_USDT', 'MIN_NET_PROFIT_USD']:
             value = float(text)
         else:
             value = text
 
         # Устанавливаем новое значение
         SETTINGS[arb_type][setting_key] = value
-        save_settings(SETTINGS)
 
         await update.message.reply_text(
             f"✅ Настройка {setting_key} изменена на {text}",
@@ -1123,11 +935,11 @@ def main():
     application.add_handler(conv_handler)
     application.add_error_handler(error_handler)
 
-    # Запускаем арбитражные задачи в фоне
+    # Запускаем арбитражную задачу в фоне
     loop = asyncio.get_event_loop()
     loop.create_task(check_dex_cex_arbitrage())
 
-    logger.info("Бот запущен")
+    logger.info("DEX-CEX Arbitrage Bot запущен")
 
     # Запускаем бота
     application.run_polling()
