@@ -297,60 +297,96 @@ def update_current_arbitrage_opportunities(base: str, dex_price: float, cex_pric
 
 async def get_dex_screener_pairs():
     """Получает пары с DexScreener с фильтрацией по ликвидности"""
-    url = "https://api.dexscreener.com/latest/dex/tokens/now"
+    # Используем популярные токены для мониторинга
+    popular_tokens = [
+        "SOL", "ETH", "BTC", "BNB", "AVAX", "MATIC", "ARB", "OP", 
+        "SUI", "APT", "ADA", "XRP", "DOGE", "DOT", "LINK", "LTC",
+        "BCH", "ATOM", "NEAR", "FIL", "ETC", "ALGO", "XLM", "XMR",
+        "EOS", "TRX", "XTZ", "AAVE", "COMP", "MKR", "SNX", "UNI",
+        "CRV", "SUSHI", "YFI", "BAL", "REN", "OMG", "ZRX", "BAT",
+        "ENJ", "MANA", "SAND", "GALA", "AXS", "SLP", "CHZ", "FTM",
+        "ONE", "VET", "ICX", "ZIL", "ONT", "IOST", "WAVES", "KSM",
+        "DASH", "ZEC", "XEM", "SC", "BTT", "WIN", "BAND", "OCEAN",
+        "RSR", "CVC", "REQ", "NMR", "POLY", "LRC", "STORJ", "KNC"
+    ]
     
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=30) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    pairs = data.get('pairs', [])
-                    
-                    # Фильтруем пары по ликвидности и объему
-                    filtered_pairs = []
-                    for pair in pairs:
-                        try:
-                            liquidity_usd = pair.get('liquidity', {}).get('usd', 0)
-                            volume_h24 = pair.get('volume', {}).get('h24', 0)
-                            
-                            if (liquidity_usd >= SETTINGS['DEX_CEX']['MIN_LIQUIDITY_USD'] and
-                                volume_h24 >= SETTINGS['DEX_CEX']['MIN_VOLUME_USD']):
-                                
-                                # Извлекаем базовый символ (убираем .e и подобные суффиксы)
-                                base_symbol = pair['baseToken']['symbol'].upper()
-                                base_symbol = re.sub(r'\.\w+$', '', base_symbol)  # Убираем суффиксы типа .e
-                                
-                                # Пропускаем пары с неподходящими символами
-                                if not re.match(r'^[A-Z0-9]{2,15}$', base_symbol):
+    all_pairs = []
+    
+    for token in popular_tokens:
+        try:
+            url = f"https://api.dexscreener.com/latest/dex/search?q={token}"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=30) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        pairs = data.get('pairs', [])
+                        
+                        for pair in pairs:
+                            try:
+                                # Проверяем, что это USDT пара
+                                quote_token = pair.get('quoteToken', {}).get('symbol', '').upper()
+                                if quote_token != 'USDT':
                                     continue
                                 
-                                filtered_pairs.append({
-                                    'baseSymbol': base_symbol,
-                                    'price': float(pair['priceNative']),
-                                    'liquidity': {'usd': liquidity_usd},
-                                    'volume': {'h24': volume_h24},
-                                    'chain': pair.get('chain', 'Unknown'),
-                                    'pairAddress': pair.get('pairAddress'),
-                                    'chainId': pair.get('chainId'),
-                                    'url': pair.get('url', f"https://dexscreener.com/{pair.get('chainId', '')}/{pair.get('pairAddress', '')}")
-                                })
+                                liquidity_usd = pair.get('liquidity', {}).get('usd', 0)
+                                volume_h24 = pair.get('volume', {}).get('h24', 0)
+                                price_usd = pair.get('priceUsd', 0)
                                 
-                                # Ограничиваем количество пар для мониторинга
-                                if len(filtered_pairs) >= SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']:
-                                    break
-                                
-                        except Exception as e:
-                            logger.warning(f"Ошибка обработки пары с DexScreener: {e}")
-                            continue
+                                # Проверяем ликвидность и объем
+                                if (liquidity_usd >= SETTINGS['DEX_CEX']['MIN_LIQUIDITY_USD'] and
+                                    volume_h24 >= SETTINGS['DEX_CEX']['MIN_VOLUME_USD'] and
+                                    price_usd > 0):
+                                    
+                                    base_symbol = pair['baseToken']['symbol'].upper()
+                                    base_symbol = re.sub(r'\.\w+$', '', base_symbol)
+                                    
+                                    # Пропускаем пары с неподходящими символами
+                                    if not re.match(r'^[A-Z0-9]{2,15}$', base_symbol):
+                                        continue
+                                    
+                                    # Проверяем, что это не стейблкоин
+                                    if any(stable in base_symbol for stable in ['USDT', 'USDC', 'BUSD', 'DAI', 'TUSD']):
+                                        continue
+                                    
+                                    pair_data = {
+                                        'baseSymbol': base_symbol,
+                                        'price': float(price_usd),
+                                        'liquidity': {'usd': liquidity_usd},
+                                        'volume': {'h24': volume_h24},
+                                        'chain': pair.get('chain', 'Unknown'),
+                                        'pairAddress': pair.get('pairAddress'),
+                                        'chainId': pair.get('chainId'),
+                                        'url': pair.get('url', f"https://dexscreener.com/{pair.get('chainId', '')}/{pair.get('pairAddress', '')}")
+                                    }
+                                    
+                                    # Добавляем только если такой символ еще не добавлен или если у этой пары больше ликвидности
+                                    existing_pair = next((p for p in all_pairs if p['baseSymbol'] == base_symbol), None)
+                                    if not existing_pair or liquidity_usd > existing_pair['liquidity']['usd']:
+                                        if existing_pair:
+                                            all_pairs.remove(existing_pair)
+                                        all_pairs.append(pair_data)
+                                    
+                                    # Ограничиваем общее количество пар
+                                    if len(all_pairs) >= SETTINGS['DEX_CEX']['MAX_PAIRS_TO_MONITOR']:
+                                        break
+                                    
+                            except Exception as e:
+                                logger.warning(f"Ошибка обработки пары {token}: {e}")
+                                continue
                     
-                    logger.info(f"Загружено {len(filtered_pairs)} пар с DexScreener")
-                    return filtered_pairs
-                else:
-                    logger.error(f"Ошибка API DexScreener: {response.status}")
-                    return []
-    except Exception as e:
-        logger.error(f"Ошибка получения данных с DexScreener: {e}")
-        return []
+                    else:
+                        logger.warning(f"Ошибка API DexScreener для {token}: {response.status}")
+                        
+        except Exception as e:
+            logger.warning(f"Ошибка получения данных для токена {token}: {e}")
+            continue
+        
+        # Делаем небольшую паузу между запросами
+        await asyncio.sleep(0.5)
+    
+    logger.info(f"Загружено {len(all_pairs)} пар с DexScreener")
+    return all_pairs
 
 async def load_futures_exchanges():
     """Загружает фьючерсные биржи"""
