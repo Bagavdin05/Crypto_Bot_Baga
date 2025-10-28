@@ -103,29 +103,70 @@ async def init_mexc_futures():
         return False
 
 async def fetch_dexscreener_pairs():
-    """Получение пар с DEXScreener"""
+    """Получение пар с DEXScreener - исправленная версия"""
     try:
-        url = "https://api.dexscreener.com/latest/dex/pairs?limit=1000"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    pairs = data.get('pairs', [])
-                    
-                    # Фильтруем пары с достаточным объемом
-                    filtered_pairs = [
-                        pair for pair in pairs 
-                        if pair.get('priceUsd') and 
-                        float(pair.get('volume', {}).get('h24', 0)) >= SETTINGS['MIN_VOLUME_USD']
-                    ]
-                    
-                    logger.info(f"Получено {len(filtered_pairs)} пар с DEXScreener")
-                    return filtered_pairs
-                else:
-                    logger.error(f"Ошибка API DEXScreener: {response.status}")
-                    return []
+        # Попробуем несколько эндпоинтов DEXScreener
+        urls = [
+            "https://api.dexscreener.com/latest/dex/pairs?limit=100",
+            "https://api.dexscreener.com/latest/dex/tokens?limit=100",
+            "https://api.dexscreener.com/latest/dex/search?q=USDT&limit=100"
+        ]
+        
+        all_pairs = []
+        
+        for url in urls:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=15) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            
+                            # Обрабатываем разные форматы ответов
+                            if 'pairs' in data:
+                                pairs = data['pairs']
+                            elif 'tokens' in data:
+                                # Преобразуем токены в формат пар
+                                tokens = data['tokens']
+                                pairs = []
+                                for token in tokens:
+                                    if 'pairs' in token:
+                                        pairs.extend(token['pairs'])
+                            else:
+                                pairs = data if isinstance(data, list) else []
+                            
+                            # Фильтруем пары с достаточным объемом и ценой
+                            filtered_pairs = [
+                                pair for pair in pairs 
+                                if pair and 
+                                pair.get('priceUsd') and 
+                                float(pair.get('priceUsd', 0)) > 0 and
+                                float(pair.get('volume', {}).get('h24', 0)) >= SETTINGS['MIN_VOLUME_USD']
+                            ]
+                            
+                            all_pairs.extend(filtered_pairs)
+                            logger.info(f"Получено {len(filtered_pairs)} пар с {url}")
+                            
+                            # Делаем небольшую паузу между запросами
+                            await asyncio.sleep(1)
+                            
+            except Exception as e:
+                logger.warning(f"Ошибка при запросе к {url}: {e}")
+                continue
+        
+        # Убираем дубликаты по pairAddress
+        unique_pairs = {}
+        for pair in all_pairs:
+            pair_address = pair.get('pairAddress')
+            if pair_address and pair_address not in unique_pairs:
+                unique_pairs[pair_address] = pair
+        
+        final_pairs = list(unique_pairs.values())
+        logger.info(f"Всего уникальных пар после фильтрации: {len(final_pairs)}")
+        
+        return final_pairs
+        
     except Exception as e:
-        logger.error(f"Ошибка получения данных с DEXScreener: {e}")
+        logger.error(f"Общая ошибка получения данных с DEXScreener: {e}")
         return []
 
 async def fetch_mexc_futures_prices():
@@ -135,19 +176,23 @@ async def fetch_mexc_futures_prices():
             if not await init_mexc_futures():
                 return {}
 
+        # Получаем только USDT пары
         symbols = [symbol for symbol in MEXC_FUTURES.symbols if symbol.endswith('/USDT:USDT')]
         prices = {}
         
-        for symbol in symbols[:100]:  # Ограничиваем количество для производительности
+        # Ограничиваем количество для производительности
+        symbols = symbols[:50]
+        
+        for symbol in symbols:
             try:
                 ticker = await asyncio.get_event_loop().run_in_executor(
                     None, MEXC_FUTURES.fetch_ticker, symbol
                 )
                 if ticker and ticker.get('last'):
-                    base_currency = symbol.replace('/USDT:USDT', '')
+                    base_currency = symbol.replace('/USDT:USDT', '').replace('/', '')
                     prices[base_currency] = {
                         'price': float(ticker['last']),
-                        'volume': float(ticker.get('baseVolume', 0)),
+                        'volume': float(ticker.get('baseVolume', 0)) * float(ticker['last']),
                         'symbol': symbol
                     }
             except Exception as e:
@@ -160,6 +205,21 @@ async def fetch_mexc_futures_prices():
         logger.error(f"Ошибка получения цен MEXC Futures: {e}")
         return {}
 
+def normalize_symbol(symbol):
+    """Нормализация символа для сравнения"""
+    if not symbol:
+        return ""
+    
+    # Убираем лишние символы и приводим к верхнему регистру
+    symbol = symbol.upper().replace('-', '').replace('_', '').replace(' ', '')
+    
+    # Убираем распространенные суффиксы
+    for suffix in ['W', 'V2', 'V3', 'TOKEN', 'COIN']:
+        if symbol.endswith(suffix):
+            symbol = symbol[:-len(suffix)]
+    
+    return symbol
+
 def find_price_differences(dex_pairs, mexc_prices):
     """Поиск разницы цен между DEX и MEXC Futures"""
     opportunities = []
@@ -168,14 +228,23 @@ def find_price_differences(dex_pairs, mexc_prices):
         try:
             dex_price = float(dex_pair.get('priceUsd', 0))
             base_token = dex_pair.get('baseToken', {})
-            base_symbol = base_token.get('symbol', '').upper()
+            base_symbol = base_token.get('symbol', '')
             
             if not dex_price or dex_price <= 0:
                 continue
             
+            # Нормализуем символ для поиска
+            normalized_symbol = normalize_symbol(base_symbol)
+            
             # Ищем соответствующий фьючерс на MEXC
-            if base_symbol in mexc_prices:
-                mexc_data = mexc_prices[base_symbol]
+            matched_symbol = None
+            for mexc_symbol in mexc_prices.keys():
+                if normalize_symbol(mexc_symbol) == normalized_symbol:
+                    matched_symbol = mexc_symbol
+                    break
+            
+            if matched_symbol and matched_symbol in mexc_prices:
+                mexc_data = mexc_prices[matched_symbol]
                 mexc_price = mexc_data['price']
                 
                 if mexc_price <= 0:
@@ -191,14 +260,16 @@ def find_price_differences(dex_pairs, mexc_prices):
                     
                     opportunities.append({
                         'symbol': base_symbol,
+                        'normalized_symbol': normalized_symbol,
                         'dex_price': dex_price,
                         'mexc_price': mexc_price,
                         'price_diff': price_diff,
                         'abs_diff': abs_diff,
                         'dex_volume': dex_volume,
                         'mexc_volume': mexc_volume,
-                        'dex_url': dex_pair.get('url', ''),
-                        'mexc_symbol': mexc_data['symbol']
+                        'dex_url': dex_pair.get('url', f"https://dexscreener.com/{dex_pair.get('chainId', 'ethereum')}/{dex_pair.get('pairAddress', '')}"),
+                        'mexc_symbol': mexc_data['symbol'],
+                        'mexc_url': f"https://futures.mexc.com/exchange/{matched_symbol}_USDT"
                     })
                     
         except Exception as e:
@@ -207,7 +278,7 @@ def find_price_differences(dex_pairs, mexc_prices):
     
     # Сортируем по абсолютной разнице (по убыванию)
     opportunities.sort(key=lambda x: x['abs_diff'], reverse=True)
-    return opportunities[:SETTINGS['MAX_RESULTS']]  # Ограничиваем количество результатов
+    return opportunities[:SETTINGS['MAX_RESULTS']]
 
 async def check_price_differences():
     """Основная функция проверки разницы цен"""
@@ -218,12 +289,28 @@ async def check_price_differences():
         dex_pairs = await fetch_dexscreener_pairs()
         if not dex_pairs:
             logger.warning("Не удалось получить данные с DEXScreener")
+            await send_telegram_message(
+                "❌ <b>Не удалось получить данные с DEXScreener</b>\n\n"
+                "Проверьте:\n"
+                "• Доступ к интернету\n"
+                "• Работоспособность DEXScreener API\n"
+                "• Настройки бота",
+                reply_markup=get_main_keyboard()
+            )
             return
         
         # Получаем цены фьючерсов с MEXC
         mexc_prices = await fetch_mexc_futures_prices()
         if not mexc_prices:
             logger.warning("Не удалось получить цены с MEXC Futures")
+            await send_telegram_message(
+                "❌ <b>Не удалось получить цены с MEXC Futures</b>\n\n"
+                "Проверьте:\n"
+                "• Доступ к MEXC\n"
+                "• Соединение с биржей\n"
+                "• Настройки API",
+                reply_markup=get_main_keyboard()
+            )
             return
         
         # Находим различия в ценах
@@ -233,9 +320,20 @@ async def check_price_differences():
             await send_opportunities_message(opportunities)
         else:
             logger.info("Арбитражных возможностей не найдено")
+            await send_telegram_message(
+                "ℹ️ <b>Арбитражные возможности не найдены</b>\n\n"
+                f"Порог: {SETTINGS['THRESHOLD_PERCENT']}%\n"
+                f"Минимальный объем: ${SETTINGS['MIN_VOLUME_USD']:,.0f}\n"
+                "Попробуйте уменьшить порог или увеличить интервал проверки.",
+                reply_markup=get_main_keyboard()
+            )
             
     except Exception as e:
         logger.error(f"Ошибка в check_price_differences: {e}")
+        await send_telegram_message(
+            f"❌ <b>Произошла ошибка при проверке:</b>\n{str(e)}",
+            reply_markup=get_main_keyboard()
+        )
 
 async def send_opportunities_message(opportunities):
     """Отправка сообщения с арбитражными возможностями"""
@@ -298,14 +396,14 @@ async def send_opportunities_message(opportunities):
             f"🏛️ <b>MEXC Futures:</b>\n"
             f"   💰 Цена: {mexc_price}\n"
             f"   📊 Объем: {mexc_volume}\n"
-            f"   🔗 <a href='https://futures.mexc.com/exchange/{opp['symbol']}_USDT'>Торговать</a>\n"
+            f"   🔗 <a href='{opp['mexc_url']}'>Торговать</a>\n"
             f"{'─' * 30}\n\n"
         )
     
     message += f"⚡ <i>Порог срабатывания: {SETTINGS['THRESHOLD_PERCENT']}%</i>\n"
     message += f"💎 <i>Минимальный объем: ${SETTINGS['MIN_VOLUME_USD']:,.0f}</i>"
     
-    await send_telegram_message(message)
+    await send_telegram_message(message, reply_markup=get_main_keyboard())
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
@@ -374,7 +472,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚙️ <b>Настройки</b> - настройки параметров бота\n"
             "📊 <b>Статус бота</b> - показывает текущее состояние\n"
             "🔄 <b>Автопроверка</b> - вкл/выкл автоматическую проверку\n\n"
-            "Бот автоматически ищет арбитражные возможности между DEX биржами и MEXC фьючерсами."
+            "<b>Как работает:</b>\n"
+            "1. Бот получает данные с DEXScreener\n"
+            "2. Сравнивает с ценами фьючерсов на MEXC\n"
+            "3. Находит разницы больше установленного порога\n"
+            "4. Показывает направления арбитража\n\n"
+            "<b>Рекомендации:</b>\n"
+            "• Начинайте с порога 5-10%\n"
+            "• Учитывайте комиссии и риски\n"
+            "• Проверяйте ликвидность перед торговлей"
         )
         await update.message.reply_text(help_text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
