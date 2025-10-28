@@ -17,7 +17,6 @@ import json
 import os
 import time
 import aiohttp
-from typing import Dict, List, Optional
 
 # Конфигурация
 TELEGRAM_TOKEN = "7990034184:AAFTx--E5GE0NIPA0Yghr6KpBC80aVtSACs"
@@ -246,7 +245,7 @@ async def open_position(symbol: str, dex_price: float, cex_price: float, positio
     safe_symbol = html.escape(symbol)
     
     message = (
-        f"🎯 <b>ОТКРЫТА ПОЗИЦИЯ</b> 🎯\n\n"
+        "🎯 <b>ОТКРЫТА ПОЗИЦИЯ</b> 🎯\n\n"
         f"▫️ <b>Монета:</b> <code>{safe_symbol}</code>\n"
         f"▫️ <b>Тип позиции:</b> {position_type}\n"
         f"▫️ <b>Цена DEX:</b> ${dex_price:.8f}\n"
@@ -299,7 +298,7 @@ async def close_position(position_id: str, current_dex_price: float, current_cex
     safe_symbol = html.escape(position['symbol'])
     
     message = (
-        f"🏁 <b>ПОЗИЦИЯ ЗАКРЫТА</b> 🏁\n\n"
+        "🏁 <b>ПОЗИЦИЯ ЗАКРЫТА</b> 🏁\n\n"
         f"▫️ <b>Монета:</b> <code>{safe_symbol}</code>\n"
         f"▫️ <b>Тип позиции:</b> {position['position_type']}\n"
         f"▫️ <b>Результат:</b> {result}\n"
@@ -412,7 +411,7 @@ async def check_dex_cex_arbitrage():
                         mexc_url = f"https://futures.mexc.com/exchange/{symbol}_USDT"
                         
                         message = (
-                            f"🔄 <b>DEX-CEX АРБИТРАЖ</b> 🔄\n\n"
+                            "🔄 <b>DEX-CEX АРБИТРАЖ</b> 🔄\n\n"
                             f"▫️ <b>Монета:</b> <code>{safe_symbol}</code>\n"
                             f"▫️ <b>Тип позиции:</b> {position_type}\n"
                             f"▫️ <b>Спред:</b> {abs(spread):.2f}%\n"
@@ -645,7 +644,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif text == "ℹ️ Помощь":
-        await update.message.reply_text(
+        help_text = (
             "🤖 <b>DEX-CEX Arbitrage Bot</b>\n\n"
             "🔍 <b>Как работает арбитраж:</b>\n"
             "• DEX цена > CEX цена: LONG (покупаем на CEX)\n"
@@ -655,7 +654,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• Открытые позиции - активные сделки\n"
             "• История сделок - завершенные операции\n"
             "• Настройки - параметры арбитража\n\n"
-            "⚡ Бот автоматически ищет возможности и присылает уведомления!",
+            "⚡ Бот автоматически ищет возможности и присылает уведомления!"
+        )
+        await update.message.reply_text(
+            help_text,
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
