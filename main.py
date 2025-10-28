@@ -3295,7 +3295,7 @@ def main():
     loop.create_task(check_spot_arbitrage())
     loop.create_task(check_futures_arbitrage())
     loop.create_task(check_spot_futures_arbitrage())
-    loop.create_task(check_triangular_spot_arbitrage())  # Новая задача для треугольного арбитража
+    loop.create_task(check_triangular_spot_arbitrage())
 
     logger.info("Бот запущен")
 
