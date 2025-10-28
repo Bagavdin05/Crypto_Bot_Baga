@@ -148,38 +148,32 @@ async def init_mexc():
 # Получение данных с DexScreener
 async def get_dex_screener_data():
     """Получает данные о топ токенах с DexScreener"""
-    url = "https://api.dexscreener.com/latest/dex/tokens/your_tokens_here"  # Будет обновлено
-    
-    # Временные данные для примера - в реальности нужно использовать API DexScreener
-    # Здесь должен быть запрос к DexScreener API для получения данных о токенах
     try:
+        # Получаем популярные пары с DexScreener
+        url = "https://api.dexscreener.com/latest/dex/search?q=USDT"
+        
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=10) as response:
                 if response.status == 200:
                     data = await response.json()
-                    return data.get('pairs', [])
+                    pairs = data.get('pairs', [])
+                    
+                    # Фильтруем только пары с USDT и достаточным объемом
+                    filtered_pairs = []
+                    for pair in pairs:
+                        try:
+                            if (pair.get('quoteToken', {}).get('symbol') == 'USDT' and
+                                float(pair.get('volume', {}).get('h24', 0)) >= SETTINGS['DEX_CEX']['MIN_VOLUME_USD']):
+                                filtered_pairs.append(pair)
+                        except (ValueError, TypeError):
+                            continue
+                    
+                    return filtered_pairs[:50]  # Ограничиваем количество для производительности
+                    
     except Exception as e:
         logger.error(f"Ошибка получения данных с DexScreener: {e}")
     
-    # Возвращаем тестовые данные
-    return [
-        {
-            'baseToken': {'symbol': 'BTC', 'name': 'Bitcoin'},
-            'quoteToken': {'symbol': 'USDT'},
-            'priceUsd': '45000.00',
-            'volume': {'h24': '1000000'},
-            'url': 'https://dexscreener.com/ethereum/0x...',
-            'chainId': 'ethereum'
-        },
-        {
-            'baseToken': {'symbol': 'ETH', 'name': 'Ethereum'},
-            'quoteToken': {'symbol': 'USDT'},
-            'priceUsd': '3000.00',
-            'volume': {'h24': '500000'},
-            'url': 'https://dexscreener.com/ethereum/0x...',
-            'chainId': 'ethereum'
-        }
-    ]
+    return []
 
 # Получение цены фьючерса с MEXC
 async def get_mexc_futures_price(symbol: str):
@@ -188,11 +182,24 @@ async def get_mexc_futures_price(symbol: str):
         return None
     
     try:
-        futures_symbol = f"{symbol}/USDT:USDT"
-        ticker = await asyncio.get_event_loop().run_in_executor(
-            None, MEXC_EXCHANGE.fetch_ticker, futures_symbol
-        )
-        return float(ticker['last']) if ticker and ticker.get('last') else None
+        # Пробуем разные варианты символа
+        symbol_variants = [
+            f"{symbol}/USDT:USDT",
+            f"{symbol}USDT/USDT:USDT",
+            f"{symbol}/USDT",
+        ]
+        
+        for futures_symbol in symbol_variants:
+            try:
+                ticker = await asyncio.get_event_loop().run_in_executor(
+                    None, MEXC_EXCHANGE.fetch_ticker, futures_symbol
+                )
+                if ticker and ticker.get('last'):
+                    return float(ticker['last'])
+            except Exception:
+                continue
+                
+        return None
     except Exception as e:
         logger.warning(f"Ошибка получения цены {symbol} на MEXC: {e}")
         return None
@@ -203,11 +210,11 @@ def calculate_profit(dex_price: float, cex_price: float, amount: float, position
     if position_type == "LONG":
         # Покупаем на CEX, продаем на DEX (когда цена DEX выше)
         profit = (dex_price - cex_price) * amount
-        profit_percent = ((dex_price - cex_price) / cex_price) * 100
+        profit_percent = ((dex_price - cex_price) / cex_price) * 100 if cex_price > 0 else 0
     else:  # SHORT
         # Продаем на CEX, покупаем на DEX (когда цена DEX ниже)
         profit = (cex_price - dex_price) * amount
-        profit_percent = ((cex_price - dex_price) / cex_price) * 100
+        profit_percent = ((cex_price - dex_price) / cex_price) * 100 if cex_price > 0 else 0
     
     return {
         "net": profit,
@@ -236,13 +243,15 @@ async def open_position(symbol: str, dex_price: float, cex_price: float, positio
     # Отправляем уведомление
     profit_info = calculate_profit(dex_price, cex_price, amount, position_type)
     
+    safe_symbol = html.escape(symbol)
+    
     message = (
         f"🎯 <b>ОТКРЫТА ПОЗИЦИЯ</b> 🎯\n\n"
-        f"▫️ <b>Монета:</b> <code>{symbol}</code>\n"
+        f"▫️ <b>Монета:</b> <code>{safe_symbol}</code>\n"
         f"▫️ <b>Тип позиции:</b> {position_type}\n"
         f"▫️ <b>Цена DEX:</b> ${dex_price:.8f}\n"
         f"▫️ <b>Цена CEX:</b> ${cex_price:.8f}\n"
-        f"▫️ <b>Количество:</b> {amount:.6f} {symbol}\n"
+        f"▫️ <b>Количество:</b> {amount:.6f} {safe_symbol}\n"
         f"▫️ <b>Сумма входа:</b> ${amount * cex_price:.2f}\n"
         f"▫️ <b>Потенциальная прибыль:</b> ${profit_info['net']:.2f} ({profit_info['percent']:.2f}%)\n\n"
         f"🔗 <a href='https://dexscreener.com/'>DEX Screener</a> | "
@@ -287,9 +296,11 @@ async def close_position(position_id: str, current_dex_price: float, current_cex
     # Определяем результат сделки
     result = "✅ ПРИБЫЛЬ" if profit_info['net'] > 0 else "❌ УБЫТОК"
     
+    safe_symbol = html.escape(position['symbol'])
+    
     message = (
         f"🏁 <b>ПОЗИЦИЯ ЗАКРЫТА</b> 🏁\n\n"
-        f"▫️ <b>Монета:</b> <code>{position['symbol']}</code>\n"
+        f"▫️ <b>Монета:</b> <code>{safe_symbol}</code>\n"
         f"▫️ <b>Тип позиции:</b> {position['position_type']}\n"
         f"▫️ <b>Результат:</b> {result}\n"
         f"▫️ <b>Прибыль:</b> ${profit_info['net']:.2f} ({profit_info['percent']:.2f}%)\n"
@@ -340,9 +351,24 @@ async def check_dex_cex_arbitrage():
             
             for token_data in dex_data:
                 try:
-                    symbol = token_data['baseToken']['symbol']
-                    dex_price = float(token_data['priceUsd'])
-                    volume_24h = float(token_data['volume']['h24'])
+                    base_token = token_data.get('baseToken', {})
+                    symbol = base_token.get('symbol', '')
+                    
+                    if not symbol:
+                        continue
+                    
+                    # Пропускаем символы с неподдерживаемыми символами
+                    if any(char in symbol for char in ['<', '>', '&', '"', "'"]):
+                        continue
+                    
+                    dex_price_str = token_data.get('priceUsd', '0')
+                    volume_24h_str = token_data.get('volume', {}).get('h24', '0')
+                    
+                    try:
+                        dex_price = float(dex_price_str)
+                        volume_24h = float(volume_24h_str)
+                    except (ValueError, TypeError):
+                        continue
                     
                     # Проверяем объем
                     if volume_24h < SETTINGS['DEX_CEX']['MIN_VOLUME_USD']:
@@ -382,7 +408,7 @@ async def check_dex_cex_arbitrage():
                         current_time = datetime.now(utc_plus_3).strftime('%H:%M:%S')
                         
                         safe_symbol = html.escape(symbol)
-                        dex_url = token_data['url']
+                        dex_url = token_data.get('url', 'https://dexscreener.com/')
                         mexc_url = f"https://futures.mexc.com/exchange/{symbol}_USDT"
                         
                         message = (
@@ -395,7 +421,7 @@ async def check_dex_cex_arbitrage():
                             f"▫️ <b>Объем 24h:</b> ${volume_24h:,.0f}\n"
                             f"▫️ <b>Сумма входа:</b> ${SETTINGS['DEX_CEX']['MIN_ENTRY_AMOUNT_USDT']}-${SETTINGS['DEX_CEX']['MAX_ENTRY_AMOUNT_USDT']}\n"
                             f"▫️ <b>Прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f}\n\n"
-                            f"💡 <i>Сигнал: {f'Покупать на CEX, продавать на DEX' if position_type == 'LONG' else 'Продавать на CEX, покупать на DEX'}</i>\n\n"
+                            f"💡 <i>Сигнал: {'Покупать на CEX, продавать на DEX' if position_type == 'LONG' else 'Продавать на CEX, покупавать на DEX'}</i>\n\n"
                             f"🔗 <a href='{dex_url}'>DEX Screener</a> | <a href='{mexc_url}'>MEXC Futures</a>\n"
                             f"⏱ {current_time}"
                         )
@@ -439,29 +465,31 @@ async def get_current_opportunities():
     
     if not recent_opportunities:
         return "📊 <b>Актуальные арбитражные связки</b>\n\n⏳ В данный момент активных арбитражных возможностей не обнаружено."
-    
+
     # Группируем и сортируем
     opportunities_list = list(recent_opportunities.values())
     opportunities_list.sort(key=lambda x: abs(x['spread']), reverse=True)
-    
+
     utc_plus_3 = timezone(timedelta(hours=3))
     current_time_str = datetime.now(utc_plus_3).strftime('%H:%M:%S')
-    
+
     message = "📊 <b>Актуальные арбитражные связки</b>\n\n"
-    
+
     for opp in opportunities_list:
         duration = current_time - opp['timestamp']
         duration_str = format_duration(duration)
         
+        safe_symbol = html.escape(opp['symbol'])
+
         message += (
-            f"▫️ <code>{opp['symbol']}</code>: {abs(opp['spread']):.2f}% ({opp['position_type']})\n"
+            f"▫️ <code>{safe_symbol}</code>: {abs(opp['spread']):.2f}% ({opp['position_type']})\n"
             f"   💰 DEX: ${opp['dex_price']:.8f} | CEX: ${opp['cex_price']:.8f}\n"
             f"   ⏱ Обнаружена: {duration_str} назад\n\n"
         )
-    
+
     message += f"⏰ <i>Обновлено: {current_time_str}</i>\n"
     message += f"📈 <i>Всего активных связок: {len(recent_opportunities)}</i>"
-    
+
     return message
 
 # Получение открытых позиций
@@ -469,16 +497,18 @@ async def get_open_positions():
     """Возвращает информацию об открытых позициях"""
     if not open_positions:
         return "📊 <b>Открытые позиции</b>\n\n⏳ Нет открытых позиций."
-    
+
     utc_plus_3 = timezone(timedelta(hours=3))
     current_time_str = datetime.now(utc_plus_3).strftime('%H:%M:%S')
-    
+
     message = "📊 <b>Открытые позиции</b>\n\n"
-    
+
     for pos_id, position in open_positions.items():
         duration = time.time() - position['open_time']
         duration_str = format_duration(duration)
         
+        safe_symbol = html.escape(position['symbol'])
+
         # Текущие цены (в реальной реализации нужно получать актуальные цены)
         current_profit = calculate_profit(
             position['dex_price'],  # В реальности нужно получать текущие цены
@@ -486,17 +516,17 @@ async def get_open_positions():
             position['amount'], 
             position['position_type']
         )
-        
+
         message += (
-            f"▫️ <code>{position['symbol']}</code> ({position['position_type']})\n"
+            f"▫️ <code>{safe_symbol}</code> ({position['position_type']})\n"
             f"   💰 Открыта по: DEX ${position['dex_price']:.8f} | CEX ${position['cex_price']:.8f}\n"
             f"   💵 Текущая прибыль: ${current_profit['net']:.2f}\n"
             f"   ⏱ Длительность: {duration_str}\n\n"
         )
-    
+
     message += f"⏰ <i>Обновлено: {current_time_str}</i>\n"
     message += f"📈 <i>Всего открытых позиций: {len(open_positions)}</i>"
-    
+
     return message
 
 # Получение истории сделок
@@ -504,22 +534,22 @@ async def get_trade_history():
     """Возвращает историю сделок"""
     if not position_history:
         return "📋 <b>История сделок</b>\n\n⏳ История сделок пуста."
-    
+
     utc_plus_3 = timezone(timedelta(hours=3))
     current_time_str = datetime.now(utc_plus_3).strftime('%H:%M:%S')
-    
+
     # Берем последние 10 сделок
     recent_history = sorted(
         position_history.values(), 
         key=lambda x: x.get('close_time', 0), 
         reverse=True
     )[:10]
-    
+
     message = "📋 <b>История сделок</b>\n\n"
-    
+
     total_profit = 0
     winning_trades = 0
-    
+
     for trade in recent_history:
         profit = trade.get('profit', 0)
         total_profit += profit
@@ -529,14 +559,16 @@ async def get_trade_history():
         duration_str = format_duration(trade.get('duration', 0))
         result = "✅" if profit > 0 else "❌"
         
+        safe_symbol = html.escape(trade['symbol'])
+
         message += (
-            f"{result} <code>{trade['symbol']}</code> ({trade['position_type']})\n"
+            f"{result} <code>{safe_symbol}</code> ({trade['position_type']})\n"
             f"   💰 Прибыль: ${profit:.2f}\n"
             f"   ⏱ Длительность: {duration_str}\n\n"
         )
-    
+
     win_rate = (winning_trades / len(recent_history)) * 100 if recent_history else 0
-    
+
     message += (
         f"📈 <b>Статистика:</b>\n"
         f"   Общая прибыль: ${total_profit:.2f}\n"
@@ -544,7 +576,7 @@ async def get_trade_history():
         f"   Всего сделок: {len(recent_history)}\n\n"
         f"⏰ <i>Обновлено: {current_time_str}</i>"
     )
-    
+
     return message
 
 # Обработчики команд Telegram
