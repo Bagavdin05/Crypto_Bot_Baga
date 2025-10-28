@@ -107,9 +107,9 @@ async def fetch_dexscreener_pairs():
     try:
         # Попробуем несколько эндпоинтов DEXScreener
         urls = [
-            "https://api.dexscreener.com/latest/dex/pairs?limit=100",
-            "https://api.dexscreener.com/latest/dex/tokens?limit=100",
-            "https://api.dexscreener.com/latest/dex/search?q=USDT&limit=100"
+            "https://api.dexscreener.com/latest/dex/pairs?limit=300",
+            "https://api.dexscreener.com/latest/dex/tokens?limit=300",
+            "https://api.dexscreener.com/latest/dex/search?q=USDT&limit=300"
         ]
         
         all_pairs = []
