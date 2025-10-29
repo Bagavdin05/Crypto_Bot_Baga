@@ -20,7 +20,7 @@ import os
 import time
 
 # Общая конфигурация
-TELEGRAM_TOKEN = "8357883688:AAG5E-IwqpbTn7hJ_320wpvKQpNfkm_QQeo"
+TELEGRAM_TOKEN = "7990034184:AAFTx--E5GE0NIPA0Yghr6KpBC80aVtSACs"
 TELEGRAM_CHAT_IDS = ["1167694150", "7916502470", "5381553894", "1111230981"]
 
 # Конфигурация спотового арбитража (по умолчанию)
@@ -808,16 +808,17 @@ async def get_current_arbitrage_opportunities():
         message += "🚀 <b>Спотовый арбитраж:</b>\n"
         for opp in spot_opportunities:
             duration_str = format_duration(opp['duration'])
-            
+
             # Форматируем сумму входа и прибыль
-            entry_amount_str = f"${opp['min_entry_amount']:.2f}-${opp['max_entry_amount']:.2f}" if opp.get('min_entry_amount') and opp.get('max_entry_amount') else "N/A"
-            
+            entry_amount_str = f"${opp['min_entry_amount']:.2f}-${opp['max_entry_amount']:.2f}" if opp.get(
+                'min_entry_amount') and opp.get('max_entry_amount') else "N/A"
+
             profit_str = "N/A"
             if opp.get('profit_min') and opp.get('profit_max'):
                 profit_min_net = opp['profit_min'].get('net', 0)
                 profit_max_net = opp['profit_max'].get('net', 0)
                 profit_str = f"${profit_min_net:.2f}-${profit_max_net:.2f}"
-            
+
             message += (
                 f"   ▫️ <code>{opp['base']}</code>: {opp['spread']:.2f}%\n"
                 f"      🟢 {opp['exchange1'].upper()} → 🔴 {opp['exchange2'].upper()}\n"
@@ -831,16 +832,17 @@ async def get_current_arbitrage_opportunities():
         message += "📊 <b>Фьючерсный арбитраж:</b>\n"
         for opp in futures_opportunities:
             duration_str = format_duration(opp['duration'])
-            
+
             # Форматируем сумму входа и прибыль
-            entry_amount_str = f"${opp['min_entry_amount']:.2f}-${opp['max_entry_amount']:.2f}" if opp.get('min_entry_amount') and opp.get('max_entry_amount') else "N/A"
-            
+            entry_amount_str = f"${opp['min_entry_amount']:.2f}-${opp['max_entry_amount']:.2f}" if opp.get(
+                'min_entry_amount') and opp.get('max_entry_amount') else "N/A"
+
             profit_str = "N/A"
             if opp.get('profit_min') and opp.get('profit_max'):
                 profit_min_net = opp['profit_min'].get('net', 0)
                 profit_max_net = opp['profit_max'].get('net', 0)
                 profit_str = f"${profit_min_net:.2f}-${profit_max_net:.2f}"
-            
+
             message += (
                 f"   ▫️ <code>{opp['base']}</code>: {opp['spread']:.2f}%\n"
                 f"      🟢 {opp['exchange1'].upper()} → 🔴 {opp['exchange2'].upper()}\n"
@@ -854,16 +856,17 @@ async def get_current_arbitrage_opportunities():
         message += "↔️ <b>Спот-Фьючерсный арбитраж:</b>\n"
         for opp in spot_futures_opportunities:
             duration_str = format_duration(opp['duration'])
-            
+
             # Форматируем сумму входа и прибыль
-            entry_amount_str = f"${opp['min_entry_amount']:.2f}-${opp['max_entry_amount']:.2f}" if opp.get('min_entry_amount') and opp.get('max_entry_amount') else "N/A"
-            
+            entry_amount_str = f"${opp['min_entry_amount']:.2f}-${opp['max_entry_amount']:.2f}" if opp.get(
+                'min_entry_amount') and opp.get('max_entry_amount') else "N/A"
+
             profit_str = "N/A"
             if opp.get('profit_min') and opp.get('profit_max'):
                 profit_min_net = opp['profit_min'].get('net', 0)
                 profit_max_net = opp['profit_max'].get('net', 0)
                 profit_str = f"${profit_min_net:.2f}-${profit_max_net:.2f}"
-            
+
             message += (
                 f"   ▫️ <code>{opp['base']}</code>: {opp['spread']:.2f}%\n"
                 f"      🟢 {opp['exchange1'].upper()} (спот) → 🔴 {opp['exchange2'].upper()} (фьючерсы)\n"
@@ -2102,7 +2105,7 @@ async def get_coin_prices(coin: str, market_type: str):
             # Находим биржи с минимальной и максимальной ценой
             min_exchange = results[0]
             max_exchange = results[-1]
-            
+
             # Получаем комиссии для этих бирж
             if market_type == "spot":
                 buy_fee = SPOT_EXCHANGES[min_exchange['name'].lower()]["taker_fee"]
@@ -2751,7 +2754,7 @@ async def handle_setting_value(update: Update, context: ContextTypes.DEFAULT_TYP
 
         return SPOT_SETTINGS if arb_type == 'SPOT' else \
             FUTURES_SETTINGS if arb_type == 'FUTURES' else \
-            SPOT_FUTURES_SETTINGS
+                SPOT_FUTURES_SETTINGS
 
     except ValueError:
         await update.message.reply_text(
