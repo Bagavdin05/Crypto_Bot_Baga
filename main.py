@@ -2621,9 +2621,9 @@ async def get_coin_prices(coin: str, market_type: str):
             if (market_type == "spot" and config["is_spot"](market)) or \
                     (market_type == "futures" and config["is_futures"](market)):
 
-                # Получаем цену из стакана
+                # Получаем данные из стакана (лучшие bid и ask)
                 price_info = await fetch_order_book_price(exchange, symbol)
-                if price_info and price_info['price']:
+                if price_info and price_info['best_bid'] and price_info['best_ask']:
                     # Получаем объем из тикера
                     volume_info = await fetch_ticker_data(exchange, symbol)
                     volume = volume_info['volume'] if volume_info else None
@@ -2635,14 +2635,16 @@ async def get_coin_prices(coin: str, market_type: str):
                         continue
 
                     found_on += 1
-                    price = price_info['price']
+                    best_bid = price_info['best_bid']
+                    best_ask = price_info['best_ask']
 
                     # Получаем URL для биржи
                     url = config["url_format"](symbol)
 
                     # Добавляем данные для сортировки
                     results.append({
-                        "price": price,
+                        "best_bid": best_bid,
+                        "best_ask": best_ask,
                         "name": name.upper(),
                         "volume": volume,
                         "url": url,
@@ -2651,8 +2653,8 @@ async def get_coin_prices(coin: str, market_type: str):
         except Exception as e:
             logger.warning(f"Ошибка получения цены {symbol} на {name}: {e}")
 
-    # Сортируем результаты по цене (от низкой к высокой)
-    results.sort(key=lambda x: x["price"])
+    # Сортируем результаты по лучшей цене покупки (bid) - от высокой к низкой
+    results.sort(key=lambda x: x["best_bid"], reverse=True)
 
     utc_plus_3 = timezone(timedelta(hours=3))
     current_time = datetime.now(utc_plus_3).strftime('%H:%M:%S')
@@ -2661,10 +2663,10 @@ async def get_coin_prices(coin: str, market_type: str):
     market_color = "🚀" if market_type == "spot" else "📊"
 
     if results:
-        # Рассчитываем разницу в процентах между самой низкой и высокой ценой
-        min_price = results[0]["price"]
-        max_price = results[-1]["price"]
-        price_diff_percent = ((max_price - min_price) / min_price) * 100
+        # Рассчитываем разницу в процентах между самой высокой ценой покупки и самой низкой ценой продажи
+        max_bid = results[0]["best_bid"]  # Самая высокая цена покупки
+        min_ask = min([x["best_ask"] for x in results])  # Самая низкая цена продажи
+        price_diff_percent = ((max_bid - min_ask) / min_ask) * 100
 
         # Формируем заголовок с информацией о фильтрации
         response = f"{market_color} <b>{market_name} рынки для <code>{coin}</code>:</b>\n\n"
@@ -2676,7 +2678,8 @@ async def get_coin_prices(coin: str, market_type: str):
             # Сделаем название биржи кликабельной ссылкой
             response += (
                 f"{item['emoji']} <a href='{item['url']}'><b>{item['name']}</b></a>\n"
-                f"▫️ Цена: {format_price(item['price'])}\n"
+                f"▫️ Покупка (Bid): {format_price(item['best_bid'])}\n"
+                f"▫️ Продажа (Ask): {format_price(item['best_ask'])}\n"
                 f"▫️ Объем: {format_volume(item['volume'])}\n"
             )
 
@@ -2685,40 +2688,40 @@ async def get_coin_prices(coin: str, market_type: str):
                 response += "\n"
 
         # Добавляем информацию о возможной арбитражной прибыли
-        if len(results) >= 2 and min_price < max_price:
-            # Находим биржи с минимальной и максимальной ценой
-            min_exchange = results[0]
-            max_exchange = results[-1]
+        if len(results) >= 2 and max_bid > min_ask:
+            # Находим биржи с самой высокой ценой покупки и самой низкой ценой продажи
+            buy_exchange = min(results, key=lambda x: x["best_ask"])
+            sell_exchange = max(results, key=lambda x: x["best_bid"])
 
             # Получаем комиссии для этих бирж
             if market_type == "spot":
-                buy_fee = SPOT_EXCHANGES[min_exchange['name'].lower()]["taker_fee"]
-                sell_fee = SPOT_EXCHANGES[max_exchange['name'].lower()]["taker_fee"]
+                buy_fee = SPOT_EXCHANGES[buy_exchange['name'].lower()]["taker_fee"]
+                sell_fee = SPOT_EXCHANGES[sell_exchange['name'].lower()]["taker_fee"]
             else:
-                buy_fee = FUTURES_EXCHANGES[min_exchange['name'].lower()]["taker_fee"]
-                sell_fee = FUTURES_EXCHANGES[max_exchange['name'].lower()]["taker_fee"]
+                buy_fee = FUTURES_EXCHANGES[buy_exchange['name'].lower()]["taker_fee"]
+                sell_fee = FUTURES_EXCHANGES[sell_exchange['name'].lower()]["taker_fee"]
 
             # Рассчитываем прибыль для минимальной и максимальной суммы входа
             profit_min = calculate_profit(
-                buy_price=min_price,
-                sell_price=max_price,
-                amount=min_entry / min_price,
+                buy_price=buy_exchange['best_ask'],  # Покупаем по ask
+                sell_price=sell_exchange['best_bid'],  # Продаем по bid
+                amount=min_entry / buy_exchange['best_ask'],
                 buy_fee_percent=buy_fee,
                 sell_fee_percent=sell_fee
             )
 
             profit_max = calculate_profit(
-                buy_price=min_price,
-                sell_price=max_price,
-                amount=max_entry / min_price,
+                buy_price=buy_exchange['best_ask'],
+                sell_price=sell_exchange['best_bid'],
+                amount=max_entry / buy_exchange['best_ask'],
                 buy_fee_percent=buy_fee,
                 sell_fee_percent=sell_fee
             )
 
             # Добавляем информацию о возможной арбитражной прибыли
             response += f"\n💼 <b>Возможный арбитраж:</b>\n"
-            response += f"🟢 Покупка на {min_exchange['name']}: {format_price(min_price)}\n"
-            response += f"🔴 Продажа на {max_exchange['name']}: {format_price(max_price)}\n"
+            response += f"🟢 Покупка на {buy_exchange['name']}: {format_price(buy_exchange['best_ask'])}\n"
+            response += f"🔴 Продажа на {sell_exchange['name']}: {format_price(sell_exchange['best_bid'])}\n"
             response += f"💰 Сумма входа: ${min_entry:.2f}-${max_entry:.2f}\n"
             response += f"💵 Чистая прибыль: ${profit_min['net']:.2f}-${profit_max['net']:.2f}\n"
 
