@@ -5,3 +5,10 @@ python-dotenv
 aiohttp
 web3
 requests
+numpy
+pip
+requests
+pandas
+scipy
+pytz
+seaborn
