@@ -18,9 +18,10 @@ import re
 import json
 import os
 import time
+import numpy as np
 
 # Общая конфигурация
-TELEGRAM_TOKEN = "7990034184:AAFTx--E5GE0NIPA0Yghr6KpBC80aVtSACs"
+TELEGRAM_TOKEN = "7952768185:AAGuhybXaGPJqtlGPd1-O4nc6_FpUL2rOgw"
 TELEGRAM_CHAT_IDS = ["1167694150", "7916502470", "5381553894", "1111230981"]
 
 # Конфигурация спотового арбитража (по умолчанию)
@@ -29,15 +30,18 @@ DEFAULT_SPOT_SETTINGS = {
     "MAX_THRESHOLD_PERCENT": 40,
     "CHECK_INTERVAL": 30,
     "MIN_EXCHANGES_FOR_PAIR": 2,
-    "MIN_VOLUME_USD": 1000000,
+    "MIN_VOLUME_USD": 500000,
     "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 350,
+    "MAX_ENTRY_AMOUNT_USDT": 300,
     "MAX_IMPACT_PERCENT": 0.5,
     "ORDER_BOOK_DEPTH": 10,
-    "MIN_NET_PROFIT_USD": 4,
+    "MIN_NET_PROFIT_USD": 5,
     "ENABLED": True,
     "PRICE_CONVERGENCE_THRESHOLD": 0.5,
-    "PRICE_CONVERGENCE_ENABLED": True
+    "PRICE_CONVERGENCE_ENABLED": True,
+    "VOLATILITY_THRESHOLD": 10.0,
+    "MIN_ORDER_BOOK_VOLUME": 100,
+    "MAX_VOLATILITY_PERCENT": 15.0
 }
 
 # Конфигурация фьючерсного арбитража (по умолчанию)
@@ -45,14 +49,24 @@ DEFAULT_FUTURES_SETTINGS = {
     "THRESHOLD_PERCENT": 0.5,
     "MAX_THRESHOLD_PERCENT": 20,
     "CHECK_INTERVAL": 30,
-    "MIN_VOLUME_USD": 1000000,
+    "MIN_VOLUME_USD": 200000,
     "MIN_EXCHANGES_FOR_PAIR": 2,
     "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 170,
+    "MAX_ENTRY_AMOUNT_USDT": 150,
     "MIN_NET_PROFIT_USD": 3,
     "ENABLED": True,
     "PRICE_CONVERGENCE_THRESHOLD": 0.5,
-    "PRICE_CONVERGENCE_ENABLED": True
+    "PRICE_CONVERGENCE_ENABLED": True,
+    "VOLATILITY_THRESHOLD": 10.0,
+    "MIN_ORDER_BOOK_VOLUME": 1000,
+    "FUNDING_RATE_THRESHOLD": 0.01,
+    "MIN_FUNDING_RATE_TO_RECEIVE": -0.005,
+    "IDEAL_FUNDING_SCENARIO": -0.01,
+    "FUNDING_CHECK_INTERVAL": 3600,
+    "MAX_HOLDING_HOURS": 24,
+    "MAX_IMPACT_PERCENT": 0.5,
+    "MAX_VOLATILITY_PERCENT": 15.0,
+    "RED_FUNDING_THRESHOLD": 0.005
 }
 
 # Конфигурация спот-фьючерсного арбитража (по умолчанию)
@@ -60,14 +74,18 @@ DEFAULT_SPOT_FUTURES_SETTINGS = {
     "THRESHOLD_PERCENT": 0.5,
     "MAX_THRESHOLD_PERCENT": 20,
     "CHECK_INTERVAL": 30,
-    "MIN_VOLUME_USD": 1000000,
+    "MIN_VOLUME_USD": 300000,
     "MIN_EXCHANGES_FOR_PAIR": 2,
     "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 170,
+    "MAX_ENTRY_AMOUNT_USDT": 150,
     "MIN_NET_PROFIT_USD": 3,
     "ENABLED": True,
     "PRICE_CONVERGENCE_THRESHOLD": 0.5,
-    "PRICE_CONVERGENCE_ENABLED": True
+    "PRICE_CONVERGENCE_ENABLED": True,
+    "VOLATILITY_THRESHOLD": 10.0,
+    "MIN_ORDER_BOOK_VOLUME": 1000,
+    "MAX_IMPACT_PERCENT": 0.5,
+    "MAX_VOLATILITY_PERCENT": 15.0
 }
 
 # Настройки бирж
@@ -89,6 +107,9 @@ EXCHANGE_SETTINGS = {
 SETTINGS_MENU, SPOT_SETTINGS, FUTURES_SETTINGS, SPOT_FUTURES_SETTINGS, EXCHANGE_SETTINGS_MENU, SETTING_VALUE, COIN_SELECTION = range(
     7)
 
+# Состояния для пагинации
+ARBITRAGE_LIST, ARBITRAGE_PAGE = range(8, 10)
+
 # Настройка логгирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -99,13 +120,28 @@ logger = logging.getLogger("CryptoArbBot")
 # Глобальные переменные для отслеживания истории уведомлений и длительности арбитража
 price_convergence_history = defaultdict(dict)
 last_convergence_notification = defaultdict(dict)
-arbitrage_start_times = defaultdict(dict)  # Для отслеживания времени начала арбитражных возможностей
-current_arbitrage_opportunities = defaultdict(dict)  # Для хранения текущих арбитражных возможностей
-previous_arbitrage_opportunities = defaultdict(dict)  # Для хранения предыдущих арбитражных возможностей
-sent_arbitrage_opportunities = defaultdict(dict)  # Для хранения отправленных в Telegram арбитражных возможностей
+arbitrage_start_times = defaultdict(dict)
+current_arbitrage_opportunities = defaultdict(dict)
+previous_arbitrage_opportunities = defaultdict(dict)
+sent_arbitrage_opportunities = defaultdict(dict)
 
 # Глобальные переменные для хранения последних настроек бирж
 LAST_EXCHANGE_SETTINGS = None
+
+# Глобальные переменные для отслеживания волатильности
+price_history = defaultdict(list)
+VOLATILITY_WINDOW = 10
+
+# Глобальные переменные для отслеживания ставок финансирования
+funding_rates_cache = {}
+last_funding_check = 0
+
+# Глобальные переменные для отслеживания волатильности монет
+coin_volatility_history = defaultdict(list)
+COIN_VOLATILITY_WINDOW = 20
+
+# Глобальные переменные для пагинации
+user_pagination_data = defaultdict(dict)
 
 
 # Загрузка сохраненных настроек
@@ -117,7 +153,6 @@ def load_settings():
     except Exception as e:
         logger.error(f"Ошибка загрузки настроек: {e}")
 
-    # Возвращаем настройки по умолчанию
     return {
         "SPOT": DEFAULT_SPOT_SETTINGS.copy(),
         "FUTURES": DEFAULT_FUTURES_SETTINGS.copy(),
@@ -295,7 +330,8 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0001,
         "url_format": lambda s: f"https://www.bybit.com/trade/usdt/{s.replace('/', '').replace(':USDT', '')}",
         "blacklist": ["BTC", "ETH"],
-        "emoji": "📊"
+        "emoji": "📊",
+        "supports_funding": True
     },
     "mexc": {
         "api": ccxt.mexc({"enableRateLimit": True}),
@@ -305,7 +341,8 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://futures.mexc.com/exchange/{s.replace('/', '_').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "📊"
+        "emoji": "📊",
+        "supports_funding": True
     },
     "okx": {
         "api": ccxt.okx({"enableRateLimit": True}),
@@ -315,7 +352,8 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.okx.com/trade-swap/{s.replace('/', '-').replace(':USDT', '').lower()}",
         "blacklist": ["BTC", "ETH"],
-        "emoji": "📊"
+        "emoji": "📊",
+        "supports_funding": True
     },
     "gate": {
         "api": ccxt.gateio({"enableRateLimit": True}),
@@ -325,7 +363,8 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.gate.io/futures_trade/{s.replace('/', '_').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "📊"
+        "emoji": "📊",
+        "supports_funding": True
     },
     "bitget": {
         "api": ccxt.bitget({"enableRateLimit": True}),
@@ -335,7 +374,8 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.bitget.com/ru/futures/{s.replace('/', '').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "📊"
+        "emoji": "📊",
+        "supports_funding": True
     },
     "kucoin": {
         "api": ccxt.kucoin({"enableRateLimit": True}),
@@ -345,7 +385,8 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.kucoin.com/futures/trade/{s.replace('/', '-').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "📊"
+        "emoji": "📊",
+        "supports_funding": True
     },
     "htx": {
         "api": ccxt.htx({
@@ -361,7 +402,8 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.htx.com/futures/exchange/{s.split(':')[0].replace('/', '_').lower()}",
         "blacklist": [],
-        "emoji": "📊"
+        "emoji": "📊",
+        "supports_funding": True
     },
     "bingx": {
         "api": ccxt.bingx({"enableRateLimit": True}),
@@ -371,7 +413,8 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://bingx.com/en-us/futures/{s.replace('/', '')}",
         "blacklist": [],
-        "emoji": "📊"
+        "emoji": "📊",
+        "supports_funding": True
     },
     "phemex": {
         "api": ccxt.phemex({
@@ -386,7 +429,8 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://phemex.com/futures/trade/{s.replace('/', '').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "📊"
+        "emoji": "📊",
+        "supports_funding": True
     },
     "coinex": {
         "api": ccxt.coinex({"enableRateLimit": True}),
@@ -396,7 +440,8 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.001,
         "url_format": lambda s: f"https://www.coinex.com/perpetual/{s.replace('/', '-').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "📊"
+        "emoji": "📊",
+        "supports_funding": True
     },
     "blofin": {
         "api": ccxt.blofin({
@@ -415,7 +460,8 @@ FUTURES_EXCHANGES = {
         "maker_fee": 0.0002,
         "url_format": lambda s: f"https://www.blofin.com/futures/{s.replace('/', '-').replace(':USDT', '')}",
         "blacklist": [],
-        "emoji": "📊"
+        "emoji": "📊",
+        "supports_funding": True
     }
 }
 
@@ -451,6 +497,9 @@ def get_spot_settings_keyboard():
          KeyboardButton(f"Статус: {'ВКЛ' if spot['ENABLED'] else 'ВЫКЛ'}")],
         [KeyboardButton(f"Сходимость: {spot['PRICE_CONVERGENCE_THRESHOLD']}%"),
          KeyboardButton(f"Увед. сравн.: {'🔔' if spot['PRICE_CONVERGENCE_ENABLED'] else '🔕'}")],
+        [KeyboardButton(f"Волатильность: {spot['VOLATILITY_THRESHOLD']}%"),
+         KeyboardButton(f"Мин. объем стакана: ${spot['MIN_ORDER_BOOK_VOLUME']}")],
+        [KeyboardButton(f"Макс. волатильность: {spot['MAX_VOLATILITY_PERCENT']}%")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
@@ -468,6 +517,12 @@ def get_futures_settings_keyboard():
          KeyboardButton(f"Статус: {'ВКЛ' if futures['ENABLED'] else 'ВЫКЛ'}")],
         [KeyboardButton(f"Сходимость: {futures['PRICE_CONVERGENCE_THRESHOLD']}%"),
          KeyboardButton(f"Увед. сравн.: {'🔔' if futures['PRICE_CONVERGENCE_ENABLED'] else '🔕'}")],
+        [KeyboardButton(f"Волатильность: {futures['VOLATILITY_THRESHOLD']}%"),
+         KeyboardButton(f"Мин. объем стакана: ${futures['MIN_ORDER_BOOK_VOLUME']}")],
+        [KeyboardButton(f"Макс. фандинг: {futures['FUNDING_RATE_THRESHOLD']}%"),
+         KeyboardButton(f"Мин. фандинг: {futures['MIN_FUNDING_RATE_TO_RECEIVE']}%")],
+        [KeyboardButton(f"Красный фандинг: {futures['RED_FUNDING_THRESHOLD']}%"),
+         KeyboardButton(f"Макс. волатильность: {futures['MAX_VOLATILITY_PERCENT']}%")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
@@ -485,6 +540,9 @@ def get_spot_futures_settings_keyboard():
          KeyboardButton(f"Статус: {'ВКЛ' if spot_futures['ENABLED'] else 'ВЫКЛ'}")],
         [KeyboardButton(f"Сходимость: {spot_futures['PRICE_CONVERGENCE_THRESHOLD']}%"),
          KeyboardButton(f"Увед. сравн.: {'🔔' if spot_futures['PRICE_CONVERGENCE_ENABLED'] else '🔕'}")],
+        [KeyboardButton(f"Волатильность: {spot_futures['VOLATILITY_THRESHOLD']}%"),
+         KeyboardButton(f"Мин. объем стакана: ${spot_futures['MIN_ORDER_BOOK_VOLUME']}")],
+        [KeyboardButton(f"Макс. волатильность: {spot_futures['MAX_VOLATILITY_PERCENT']}%")],
         [KeyboardButton("🔙 Назад в настройки")]
     ], resize_keyboard=True)
 
@@ -501,6 +559,21 @@ def get_exchange_settings_keyboard():
     if row:
         keyboard.append(row)
     keyboard.append([KeyboardButton("🔙 Назад в настройки")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+def get_arbitrage_list_keyboard(page, total_pages):
+    """Клавиатура для навигации по страницам арбитражных связок"""
+    keyboard = []
+    if total_pages > 1:
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(KeyboardButton("⬅️ Предыдущая"))
+        nav_buttons.append(KeyboardButton(f"{page + 1}/{total_pages}"))
+        if page < total_pages - 1:
+            nav_buttons.append(KeyboardButton("Следующая ➡️"))
+        keyboard.append(nav_buttons)
+    keyboard.append([KeyboardButton("🔙 Главное меню")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
@@ -542,7 +615,9 @@ def format_duration(seconds):
 def add_opportunity_to_sent(arb_type: str, base: str, exchange1: str, exchange2: str, spread: float,
                             price1: float, price2: float, volume1: float = None, volume2: float = None,
                             min_entry_amount: float = None, max_entry_amount: float = None,
-                            profit_min: dict = None, profit_max: dict = None):
+                            profit_min: dict = None, profit_max: dict = None,
+                            available_volume: float = None, order_book_volume: float = None,
+                            long_funding: float = None, short_funding: float = None):
     """Добавляет связку в отправленные возможности"""
     key = f"{arb_type}_{base}_{exchange1}_{exchange2}"
     current_time = time.time()
@@ -561,6 +636,10 @@ def add_opportunity_to_sent(arb_type: str, base: str, exchange1: str, exchange2:
         'max_entry_amount': max_entry_amount,
         'profit_min': profit_min,
         'profit_max': profit_max,
+        'available_volume': available_volume,
+        'order_book_volume': order_book_volume,
+        'long_funding': long_funding,
+        'short_funding': short_funding,
         'start_time': current_time,
         'last_updated': current_time
     }
@@ -718,50 +797,247 @@ def update_arbitrage_duration(arb_type: str, base: str, exchange1: str, exchange
 def update_current_arbitrage_opportunities(arb_type: str, base: str, exchange1: str, exchange2: str, spread: float,
                                            price1: float, price2: float, volume1: float = None, volume2: float = None,
                                            min_entry_amount: float = None, max_entry_amount: float = None,
-                                           profit_min: dict = None, profit_max: dict = None):
+                                           profit_min: dict = None, profit_max: dict = None,
+                                           available_volume: float = None, order_book_volume: float = None,
+                                           long_funding: float = None, short_funding: float = None):
     """Обновляет информацию о текущих арбитражных возможностях (только для отправленных связок)"""
     key = f"{arb_type}_{base}_{exchange1}_{exchange2}"
     current_time = time.time()
 
     # Обновляем только связки, которые были отправлены в Telegram
     if key in sent_arbitrage_opportunities:
-        current_arbitrage_opportunities[key] = {
-            'arb_type': arb_type,
-            'base': base,
-            'exchange1': exchange1,
-            'exchange2': exchange2,
+        # Сохраняем существующие данные, чтобы не потерять их
+        existing_opp = sent_arbitrage_opportunities[key]
+
+        # Обновляем только те поля, которые были переданы (не None)
+        update_data = {
             'spread': spread,
             'price1': price1,
             'price2': price2,
-            'volume1': volume1,
-            'volume2': volume2,
-            'min_entry_amount': min_entry_amount,
-            'max_entry_amount': max_entry_amount,
-            'profit_min': profit_min,
-            'profit_max': profit_max,
-            'start_time': sent_arbitrage_opportunities[key]['start_time'],
             'last_updated': current_time
         }
 
+        # Добавляем опциональные поля, если они переданы
+        if volume1 is not None:
+            update_data['volume1'] = volume1
+        if volume2 is not None:
+            update_data['volume2'] = volume2
+        if min_entry_amount is not None:
+            update_data['min_entry_amount'] = min_entry_amount
+        if max_entry_amount is not None:
+            update_data['max_entry_amount'] = max_entry_amount
+        if profit_min is not None:
+            update_data['profit_min'] = profit_min
+        if profit_max is not None:
+            update_data['profit_max'] = profit_max
+        if available_volume is not None:
+            update_data['available_volume'] = available_volume
+        if order_book_volume is not None:
+            update_data['order_book_volume'] = order_book_volume
+        if long_funding is not None:
+            update_data['long_funding'] = long_funding
+        if short_funding is not None:
+            update_data['short_funding'] = short_funding
 
-async def get_current_arbitrage_opportunities():
-    """Возвращает форматированное сообщение с текущими арбитражными возможностями (только отправленными в Telegram)"""
+        # Сохраняем start_time из существующих данных
+        if 'start_time' in existing_opp:
+            update_data['start_time'] = existing_opp['start_time']
 
-    # Очищаем устаревшие возможности
-    cleanup_old_opportunities()
+        # Обновляем данные
+        sent_arbitrage_opportunities[key].update(update_data)
+        current_arbitrage_opportunities[key] = sent_arbitrage_opportunities[key].copy()
+
+
+def calculate_volatility(prices):
+    """Рассчитывает волатильность на основе истории цен"""
+    if len(prices) < 2:
+        return 0.0
+
+    returns = []
+    for i in range(1, len(prices)):
+        if prices[i - 1] != 0:
+            returns.append((prices[i] - prices[i - 1]) / prices[i - 1])
+
+    if not returns:
+        return 0.0
+
+    return np.std(returns) * 100  # в процентах
+
+
+def update_price_history(arb_type: str, base: str, exchange: str, price: float):
+    """Обновляет историю цен для расчета волатильности"""
+    key = f"{arb_type}_{base}_{exchange}"
+
+    # Добавляем новую цену
+    price_history[key].append(price)
+
+    # Ограничиваем размер истории
+    if len(price_history[key]) > VOLATILITY_WINDOW:
+        price_history[key] = price_history[key][-VOLATILITY_WINDOW:]
+
+
+def check_volatility(arb_type: str, base: str, exchange: str, price: float) -> bool:
+    """Проверяет, не превышает ли волатильность допустимый порог"""
+    key = f"{arb_type}_{base}_{exchange}"
+
+    if key not in price_history:
+        return True
+
+    volatility = calculate_volatility(price_history[key])
+    threshold = SETTINGS[arb_type]['VOLATILITY_THRESHOLD']
+
+    logger.debug(f"Волатильность для {key}: {volatility:.2f}% (порог: {threshold}%)")
+
+    return volatility <= threshold
+
+
+def update_coin_volatility_history(base: str, price: float):
+    """Обновляет историю цен для расчета общей волатильности монеты"""
+    # Добавляем новую цену
+    coin_volatility_history[base].append(price)
+
+    # Ограничиваем размер истории
+    if len(coin_volatility_history[base]) > COIN_VOLATILITY_WINDOW:
+        coin_volatility_history[base] = coin_volatility_history[base][-COIN_VOLATILITY_WINDOW:]
+
+
+def check_coin_volatility(base: str, arb_type: str) -> bool:
+    """Проверяет общую волатильность монеты"""
+    if base not in coin_volatility_history or len(coin_volatility_history[base]) < 2:
+        return True
+
+    volatility = calculate_volatility(coin_volatility_history[base])
+    max_volatility = SETTINGS[arb_type].get('MAX_VOLATILITY_PERCENT', 15.0)
+
+    logger.debug(f"Общая волатильность монеты {base}: {volatility:.2f}% (макс. порог: {max_volatility}%)")
+
+    if volatility > max_volatility:
+        logger.info(f"Монета {base} отфильтрована из-за высокой волатильности: {volatility:.2f}% > {max_volatility}%")
+        return False
+
+    return True
+
+
+async def get_current_funding_rates():
+    """Получает текущие ставки финансирования со всех бирж"""
+    global funding_rates_cache, last_funding_check
+
+    current_time = time.time()
+    # Проверяем ставки финансирования раз в час
+    if current_time - last_funding_check < SETTINGS['FUTURES']['FUNDING_CHECK_INTERVAL']:
+        return funding_rates_cache
+
+    funding_data = {}
+    logger.info("Обновление ставок финансирования...")
+
+    for name, data in FUTURES_EXCHANGES_LOADED.items():
+        if not SETTINGS['EXCHANGES'][name]['ENABLED']:
+            continue
+
+        exchange = data["api"]
+        config = data["config"]
+
+        if not config.get("supports_funding", False):
+            continue
+
+        try:
+            # Получаем все рынки фьючерсов
+            markets = exchange.markets
+            for symbol, market in markets.items():
+                try:
+                    if config["is_futures"](market):
+                        base = market['base']
+
+                        # Получаем ставку финансирования
+                        funding_rate = await asyncio.get_event_loop().run_in_executor(
+                            None, exchange.fetch_funding_rate, symbol
+                        )
+
+                        if funding_rate and 'fundingRate' in funding_rate:
+                            rate = float(funding_rate['fundingRate']) * 100  # Конвертируем в проценты
+
+                            if base not in funding_data:
+                                funding_data[base] = {}
+                            funding_data[base][name] = rate
+
+                            logger.debug(f"Ставка финансирования для {base} на {name}: {rate:.4f}%")
+                except Exception as e:
+                    logger.debug(f"Ошибка получения ставки финансирования для {symbol} на {name}: {e}")
+                    continue
+
+        except Exception as e:
+            logger.warning(f"Ошибка получения ставок финансирования для {name}: {e}")
+
+    funding_rates_cache = funding_data
+    last_funding_check = current_time
+    logger.info(f"Обновлены ставки финансирования для {len(funding_data)} монет")
+    return funding_data
+
+
+def calculate_funding_score(long_funding: float, short_funding: float) -> float:
+    """Рассчитывает оценку выгодности финансирования"""
+    # Для лонга: отрицательное финансирование выгодно (мы получаем)
+    # Для шорта: положительное финансирование выгодно (мы получаем)
+    long_score = -long_funding  # Инвертируем для лонга
+    short_score = short_funding
+
+    total_score = long_score + short_score
+    return total_score
+
+
+def is_favorable_funding(long_funding: float, short_funding: float) -> bool:
+    """Проверяет, является ли финансирование выгодным"""
+    funding_score = calculate_funding_score(long_funding, short_funding)
+
+    # Проверяем максимальную ставку для оплаты
+    if funding_score > SETTINGS['FUTURES']['FUNDING_RATE_THRESHOLD']:
+        return False
+
+    # Проверяем минимальную ставку для получения (если установлена)
+    if (SETTINGS['FUTURES']['MIN_FUNDING_RATE_TO_RECEIVE'] is not None and
+            funding_score < SETTINGS['FUTURES']['MIN_FUNDING_RATE_TO_RECEIVE']):
+        return False
+
+    return True
+
+
+def has_red_funding(long_funding: float, short_funding: float) -> bool:
+    """Проверяет, является ли финансирование 'красным' (очень невыгодным)"""
+    funding_score = calculate_funding_score(long_funding, short_funding)
+    red_threshold = SETTINGS['FUTURES']['RED_FUNDING_THRESHOLD']
+
+    # Если общий score превышает порог красного фандинга - считаем связку невыгодной
+    return funding_score > red_threshold
+
+
+def calculate_effective_profit_with_funding(base_profit: float, entry_amount: float,
+                                            long_funding: float, short_funding: float,
+                                            holding_hours: int = 8) -> float:
+    """Рассчитывает эффективную прибыль с учетом финансирования"""
+    # Рассчитываем влияние финансирования
+    funding_impact = (short_funding - long_funding) * (holding_hours / 8) * entry_amount / 100
+
+    # Эффективная прибыль с учетом финансирования
+    effective_profit = base_profit + funding_impact
+    return effective_profit
+
+
+async def get_current_arbitrage_opportunities_page(page: int = 0, opportunities_per_page: int = 5):
+    """Возвращает форматированное сообщение с текущими арбитражными возможностями для указанной страницы"""
 
     # Используем только отправленные связки
     filtered_opportunities = {}
     current_time = time.time()
 
     for key, opportunity in sent_arbitrage_opportunities.items():
-        # Проверяем, что связка не устарела
-        if (current_time - opportunity['last_updated']) <= 3600:
+        # Проверяем, что связка не устарела (теперь связки не удаляются по времени, только при сходимости)
+        # Но все же удаляем очень старые связки (24 часа) на всякий случай
+        if (current_time - opportunity['last_updated']) <= 86400:  # 24 часа
             filtered_opportunities[key] = opportunity
 
     if not filtered_opportunities:
         return "📊 <b>Актуальные арбитражные связки</b>\n\n" \
-               "⏳ В данный момент активных арбитражных возможностей не обнаружено."
+               "⏳ В данный момент активных арбитражных возможностей не обнаружено.", 0, 0
 
     # Группируем по типу арбитража
     spot_opportunities = []
@@ -783,6 +1059,10 @@ async def get_current_arbitrage_opportunities():
             'max_entry_amount': opportunity.get('max_entry_amount'),
             'profit_min': opportunity.get('profit_min'),
             'profit_max': opportunity.get('profit_max'),
+            'available_volume': opportunity.get('available_volume'),
+            'order_book_volume': opportunity.get('order_book_volume'),
+            'long_funding': opportunity.get('long_funding'),
+            'short_funding': opportunity.get('short_funding'),
             'duration': duration
         }
 
@@ -798,16 +1078,45 @@ async def get_current_arbitrage_opportunities():
     futures_opportunities.sort(key=lambda x: x['spread'], reverse=True)
     spot_futures_opportunities.sort(key=lambda x: x['spread'], reverse=True)
 
+    # Объединяем все возможности в один список для пагинации
+    all_opportunities = spot_opportunities + futures_opportunities + spot_futures_opportunities
+
+    # Рассчитываем общее количество страниц
+    total_opportunities = len(all_opportunities)
+    total_pages = (total_opportunities + opportunities_per_page - 1) // opportunities_per_page
+
+    # Если запрошенная страница превышает общее количество страниц, возвращаем последнюю
+    if page >= total_pages:
+        page = total_pages - 1
+    if page < 0:
+        page = 0
+
+    # Получаем возможности для текущей страницы
+    start_idx = page * opportunities_per_page
+    end_idx = start_idx + opportunities_per_page
+    page_opportunities = all_opportunities[start_idx:end_idx]
+
     utc_plus_3 = timezone(timedelta(hours=3))
     current_time_str = datetime.now(utc_plus_3).strftime('%H:%M:%S')
 
-    message = "📊 <b>Актуальные арбитражные связки</b>\n\n"
+    message = f"📊 <b>Актуальные арбитражные связки</b> (Страница {page + 1}/{total_pages})\n\n"
 
-    # Добавляем спотовые возможности
-    if spot_opportunities:
-        message += "🚀 <b>Спотовый арбитраж:</b>\n"
-        for opp in spot_opportunities:
+    if not page_opportunities:
+        message += "⏳ На этой странице нет активных арбитражных возможностей."
+    else:
+        for i, opp in enumerate(page_opportunities, start=1):
             duration_str = format_duration(opp['duration'])
+
+            # Определяем тип арбитража
+            if opp in spot_opportunities:
+                arb_type_emoji = "🚀"
+                arb_type_name = "Спот"
+            elif opp in futures_opportunities:
+                arb_type_emoji = "📊"
+                arb_type_name = "Фьючерсы"
+            else:
+                arb_type_emoji = "↔️"
+                arb_type_name = "Спот-Фьючерсы"
 
             # Форматируем сумму входа и прибыль
             entry_amount_str = f"${opp['min_entry_amount']:.2f}-${opp['max_entry_amount']:.2f}" if opp.get(
@@ -819,76 +1128,45 @@ async def get_current_arbitrage_opportunities():
                 profit_max_net = opp['profit_max'].get('net', 0)
                 profit_str = f"${profit_min_net:.2f}-${profit_max_net:.2f}"
 
-            message += (
-                f"   ▫️ <code>{opp['base']}</code>: {opp['spread']:.2f}%\n"
-                f"      🟢 {opp['exchange1'].upper()} → 🔴 {opp['exchange2'].upper()}\n"
-                f"      💰 Сумма входа: {entry_amount_str}\n"
-                f"      💵 Прибыль: {profit_str}\n"
-                f"      ⏱ Длительность: {duration_str}\n\n"
-            )
+            # Форматируем доступный объем
+            available_volume_str = f"{opp['available_volume']:.6f} {opp['base']}" if opp.get(
+                'available_volume') else "N/A"
+            order_book_volume_str = f"${opp['order_book_volume']:.2f}" if opp.get('order_book_volume') else "N/A"
 
-    # Добавляем фьючерсные возможности
-    if futures_opportunities:
-        message += "📊 <b>Фьючерсный арбитраж:</b>\n"
-        for opp in futures_opportunities:
-            duration_str = format_duration(opp['duration'])
-
-            # Форматируем сумму входа и прибыль
-            entry_amount_str = f"${opp['min_entry_amount']:.2f}-${opp['max_entry_amount']:.2f}" if opp.get(
-                'min_entry_amount') and opp.get('max_entry_amount') else "N/A"
-
-            profit_str = "N/A"
-            if opp.get('profit_min') and opp.get('profit_max'):
-                profit_min_net = opp['profit_min'].get('net', 0)
-                profit_max_net = opp['profit_max'].get('net', 0)
-                profit_str = f"${profit_min_net:.2f}-${profit_max_net:.2f}"
+            # Добавляем информацию о финансировании для фьючерсов
+            funding_info = ""
+            if opp.get('long_funding') is not None and opp.get('short_funding') is not None:
+                funding_score = calculate_funding_score(opp['long_funding'], opp['short_funding'])
+                funding_emoji = "🟢"
+                if has_red_funding(opp['long_funding'], opp['short_funding']):
+                    funding_emoji = "🔴"
+                funding_info = f"\n      {funding_emoji} Фандинг: {funding_score:.4f}%"
 
             message += (
-                f"   ▫️ <code>{opp['base']}</code>: {opp['spread']:.2f}%\n"
-                f"      🟢 {opp['exchange1'].upper()} → 🔴 {opp['exchange2'].upper()}\n"
-                f"      💰 Сумма входа: {entry_amount_str}\n"
-                f"      💵 Прибыль: {profit_str}\n"
-                f"      ⏱ Длительность: {duration_str}\n\n"
-            )
-
-    # Добавляем спот-фьючерсные возможности
-    if spot_futures_opportunities:
-        message += "↔️ <b>Спот-Фьючерсный арбитраж:</b>\n"
-        for opp in spot_futures_opportunities:
-            duration_str = format_duration(opp['duration'])
-
-            # Форматируем сумму входа и прибыль
-            entry_amount_str = f"${opp['min_entry_amount']:.2f}-${opp['max_entry_amount']:.2f}" if opp.get(
-                'min_entry_amount') and opp.get('max_entry_amount') else "N/A"
-
-            profit_str = "N/A"
-            if opp.get('profit_min') and opp.get('profit_max'):
-                profit_min_net = opp['profit_min'].get('net', 0)
-                profit_max_net = opp['profit_max'].get('net', 0)
-                profit_str = f"${profit_min_net:.2f}-${profit_max_net:.2f}"
-
-            message += (
-                f"   ▫️ <code>{opp['base']}</code>: {opp['spread']:.2f}%\n"
-                f"      🟢 {opp['exchange1'].upper()} (спот) → 🔴 {opp['exchange2'].upper()} (фьючерсы)\n"
-                f"      💰 Сумма входа: {entry_amount_str}\n"
-                f"      💵 Прибыль: {profit_str}\n"
-                f"      ⏱ Длительность: {duration_str}\n\n"
+                f"{arb_type_emoji} <b>{arb_type_name}</b> | <code>{opp['base']}</code>\n"
+                f"   📈 Разница: {opp['spread']:.2f}%\n"
+                f"   🟢 {opp['exchange1'].upper()} → 🔴 {opp['exchange2'].upper()}\n"
+                f"   💰 Сумма входа: {entry_amount_str}\n"
+                f"   💵 Прибыль: {profit_str}"
+                f"{funding_info}\n"
+                f"   📊 Объем: {available_volume_str}\n"
+                f"   ⏱ Длительность: {duration_str}\n\n"
             )
 
     message += f"⏰ <i>Обновлено: {current_time_str}</i>\n"
-    message += f"📈 <i>Всего активных связок: {len(filtered_opportunities)}</i>"
+    message += f"📈 <i>Всего активных связок: {total_opportunities}</i>"
 
-    return message
+    return message, total_pages, page
 
 
 def cleanup_old_opportunities():
-    """Очищает устаревшие арбитражные возможности (старше 1 часа)"""
+    """Очищает устаревшие арбитражные возможности (старше 24 часов)"""
     current_time = time.time()
     keys_to_remove = []
 
     for key, opportunity in sent_arbitrage_opportunities.items():
-        # Удаляем если связка устарела (старше 1 часа)
-        if current_time - opportunity['last_updated'] > 3600:
+        # Удаляем если связка устарела (старше 24 часов)
+        if current_time - opportunity['last_updated'] > 86400:
             keys_to_remove.append(key)
 
     for key in keys_to_remove:
@@ -910,36 +1188,71 @@ def load_markets_sync(exchange):
         return None
 
 
+async def fetch_order_book_price(exchange, symbol: str):
+    """Получает цену из стакана (лучшая цена покупки и продажи)"""
+    try:
+        order_book = await asyncio.get_event_loop().run_in_executor(
+            None, exchange.fetch_order_book, symbol, 1
+        )
+
+        if order_book and order_book['bids'] and order_book['asks']:
+            best_bid = float(order_book['bids'][0][0])  # Лучшая цена покупки
+            best_ask = float(order_book['asks'][0][0])  # Лучшая цена продажи
+            
+            # Используем среднюю цену между лучшим bid и ask
+            price = (best_bid + best_ask) / 2
+            
+            # Пытаемся получить объем из стакана
+            bid_volume = float(order_book['bids'][0][1]) if len(order_book['bids'][0]) > 1 else 0
+            ask_volume = float(order_book['asks'][0][1]) if len(order_book['asks'][0]) > 1 else 0
+            volume = min(bid_volume * best_bid, ask_volume * best_ask)  # Минимальный объем в USDT
+
+            logger.debug(f"Цена из стакана {symbol} на {exchange.id}: bid={best_bid}, ask={best_ask}, средняя={price}, объем={volume}")
+
+            return {
+                'price': price,
+                'best_bid': best_bid,
+                'best_ask': best_ask,
+                'volume': volume,
+                'symbol': symbol
+            }
+        return None
+    except Exception as e:
+        logger.warning(f"Ошибка получения стакана {symbol} на {exchange.id}: {e}")
+        return None
+
+
 async def fetch_ticker_data(exchange, symbol: str):
+    """Получает данные тикера (для объемов)"""
     try:
         ticker = await asyncio.get_event_loop().run_in_executor(
             None, exchange.fetch_ticker, symbol
         )
 
         if ticker:
-            price = float(ticker['last']) if ticker.get('last') else None
-
-            # Пытаемся получить объем из разных источников
+            # Используем только объем из тикера, цену берем из стакана
             volume = None
             if ticker.get('quoteVolume') is not None:
                 volume = float(ticker['quoteVolume'])
-            elif ticker.get('baseVolume') is not None and price:
-                volume = float(ticker['baseVolume']) * price
+            elif ticker.get('baseVolume') is not None and ticker.get('last'):
+                volume = float(ticker['baseVolume']) * float(ticker['last'])
 
-            logger.debug(f"Данные тикера {symbol} на {exchange.id}: цена={price}, объем={volume}")
+            logger.debug(f"Данные объема {symbol} на {exchange.id}: объем={volume}")
 
             return {
-                'price': price,
                 'volume': volume,
                 'symbol': symbol
             }
         return None
     except Exception as e:
-        logger.warning(f"Ошибка данных {symbol} на {exchange.id}: {e}")
+        logger.warning(f"Ошибка данных объема {symbol} на {exchange.id}: {e}")
         return None
 
 
-async def fetch_order_book(exchange, symbol: str, depth: int = SETTINGS['SPOT']['ORDER_BOOK_DEPTH']):
+async def fetch_order_book(exchange, symbol: str, depth: int = None):
+    if depth is None:
+        depth = SETTINGS['SPOT']['ORDER_BOOK_DEPTH']
+
     try:
         order_book = await asyncio.get_event_loop().run_in_executor(
             None, exchange.fetch_order_book, symbol, depth)
@@ -952,33 +1265,37 @@ async def fetch_order_book(exchange, symbol: str, depth: int = SETTINGS['SPOT'][
 
 def calculate_available_volume(order_book, side: str, max_impact_percent: float):
     if not order_book:
-        return 0
+        return 0, 0
 
     if side == 'buy':
         asks = order_book['asks']
         if not asks:
-            return 0
+            return 0, 0
         best_ask = asks[0][0]
         max_allowed_price = best_ask * (1 + max_impact_percent / 100)
         total_volume = 0
+        total_value = 0
         for price, volume in asks:
             if price > max_allowed_price:
                 break
             total_volume += volume
-        return total_volume
+            total_value += volume * price
+        return total_volume, total_value
     elif side == 'sell':
         bids = order_book['bids']
         if not bids:
-            return 0
+            return 0, 0
         best_bid = bids[0][0]
         min_allowed_price = best_bid * (1 - max_impact_percent / 100)
         total_volume = 0
+        total_value = 0
         for price, volume in bids:
             if price < min_allowed_price:
                 break
             total_volume += volume
-        return total_volume
-    return 0
+            total_value += volume * price
+        return total_volume, total_value
+    return 0, 0
 
 
 async def check_deposit_withdrawal_status(exchange, currency: str, check_type: str = 'deposit'):
@@ -1211,23 +1528,46 @@ async def check_spot_arbitrage():
             found_opportunities = 0
             for base, exchange_symbols in valid_pairs.items():
                 try:
-                    ticker_data = {}
+                    # Проверяем общую волатильность монеты
+                    if not check_coin_volatility(base, 'SPOT'):
+                        continue
 
-                    # Получаем данные тикеров для всех бирж
+                    price_data = {}
+                    volume_data = {}
+
+                    # Получаем данные цен из стакана и объемы из тикера для всех бирж
                     for name, symbol in exchange_symbols:
                         try:
-                            data = await fetch_ticker_data(
+                            # Получаем цену из стакана
+                            price_info = await fetch_order_book_price(
                                 SPOT_EXCHANGES_LOADED[name]["api"], symbol)
-                            if data and data['price'] is not None:
+                            
+                            # Получаем объем из тикера
+                            volume_info = await fetch_ticker_data(
+                                SPOT_EXCHANGES_LOADED[name]["api"], symbol)
+                                
+                            if price_info and price_info['price'] is not None:
+                                # Обновляем историю цен для расчета волатильности
+                                update_price_history('SPOT', base, name, price_info['price'])
+                                update_coin_volatility_history(base, price_info['price'])
+
+                                # Проверяем волатильность
+                                if not check_volatility('SPOT', base, name, price_info['price']):
+                                    logger.debug(f"Пропускаем {base} на {name} из-за высокой волатильности")
+                                    continue
+
                                 # Если объем известен, проверяем минимальный объем
-                                if data['volume'] is None:
+                                volume = volume_info['volume'] if volume_info else None
+                                if volume is None:
                                     logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
-                                    ticker_data[name] = data
-                                elif data['volume'] >= SETTINGS['SPOT']['MIN_VOLUME_USD']:
-                                    ticker_data[name] = data
+                                    price_data[name] = price_info
+                                    volume_data[name] = volume
+                                elif volume >= SETTINGS['SPOT']['MIN_VOLUME_USD']:
+                                    price_data[name] = price_info
+                                    volume_data[name] = volume
                                 else:
                                     logger.debug(
-                                        f"Объем {symbol} на {name} слишком мал: {data['volume']}"
+                                        f"Объем {symbol} на {name} слишком мал: {volume}"
                                     )
                             else:
                                 logger.debug(
@@ -1237,11 +1577,11 @@ async def check_spot_arbitrage():
                                 f"Ошибка получения данных {base} на {name}: {e}"
                             )
 
-                    if len(ticker_data) < SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']:
+                    if len(price_data) < SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']:
                         continue
 
-                    # Сортируем биржи по цене
-                    sorted_data = sorted(ticker_data.items(),
+                    # Сортируем биржи по цене из стакана
+                    sorted_data = sorted(price_data.items(),
                                          key=lambda x: x[1]['price'])
                     min_ex = sorted_data[0]  # Самая низкая цена (покупка)
                     max_ex = sorted_data[-1]  # Самая высокая цена (продажа)
@@ -1255,11 +1595,21 @@ async def check_spot_arbitrage():
                     )
 
                     # Обновляем информацию о текущих арбитражных возможностях (только для отправленных связок)
-                    update_current_arbitrage_opportunities(
-                        'SPOT', base, min_ex[0], max_ex[0], spread,
-                        min_ex[1]['price'], max_ex[1]['price'],
-                        min_ex[1]['volume'], max_ex[1]['volume']
-                    )
+                    key = f"SPOT_{base}_{min_ex[0]}_{max_ex[0]}"
+                    if key in sent_arbitrage_opportunities:
+                        # Получаем текущую возможность и сохраняем существующие данные
+                        current_opp = sent_arbitrage_opportunities[key]
+                        update_current_arbitrage_opportunities(
+                            'SPOT', base, min_ex[0], max_ex[0], spread,
+                            min_ex[1]['price'], max_ex[1]['price'],
+                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            current_opp.get('min_entry_amount'),
+                            current_opp.get('max_entry_amount'),
+                            current_opp.get('profit_min'),
+                            current_opp.get('profit_max'),
+                            current_opp.get('available_volume'),
+                            current_opp.get('order_book_volume')
+                        )
 
                     # Проверяем сходимость цен для уведомления (только для отправленных связок)
                     duration = update_arbitrage_duration('SPOT', base, min_ex[0], max_ex[0], spread)
@@ -1267,7 +1617,7 @@ async def check_spot_arbitrage():
                         await send_price_convergence_notification(
                             'SPOT', base, min_ex[0], max_ex[0],
                             min_ex[1]['price'], max_ex[1]['price'], spread,
-                            min_ex[1]['volume'], max_ex[1]['volume'], duration
+                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]), duration
                         )
 
                     if SETTINGS['SPOT']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['SPOT']['MAX_THRESHOLD_PERCENT']:
@@ -1287,7 +1637,7 @@ async def check_spot_arbitrage():
                             )
                             continue
 
-                        # Получаем стаканы ордеров
+                        # Получаем стаканы ордеров для расчета доступного объема
                         buy_exchange = SPOT_EXCHANGES_LOADED[min_ex[0]]["api"]
                         sell_exchange = SPOT_EXCHANGES_LOADED[max_ex[0]]["api"]
                         buy_symbol = min_ex[1]['symbol']
@@ -1302,15 +1652,22 @@ async def check_spot_arbitrage():
                                 f"Пропускаем {base}: нет данных стакана")
                             continue
 
-                        # Рассчитываем доступный объем
-                        buy_volume = calculate_available_volume(
+                        # Рассчитываем доступный объем из стакана
+                        buy_volume, buy_value = calculate_available_volume(
                             buy_order_book, 'buy', SETTINGS['SPOT']['MAX_IMPACT_PERCENT'])
-                        sell_volume = calculate_available_volume(
+                        sell_volume, sell_value = calculate_available_volume(
                             sell_order_book, 'sell', SETTINGS['SPOT']['MAX_IMPACT_PERCENT'])
                         available_volume = min(buy_volume, sell_volume)
+                        order_book_volume = min(buy_value, sell_value)
 
                         logger.debug(
-                            f"Пара {base}: доступный объем {available_volume}")
+                            f"Пара {base}: доступный объем {available_volume}, объем стакана ${order_book_volume:.2f}"
+                        )
+
+                        # Проверяем минимальный объем стакана
+                        if order_book_volume < SETTINGS['SPOT']['MIN_ORDER_BOOK_VOLUME']:
+                            logger.debug(f"Пропускаем {base}: объем стакана слишком мал: ${order_book_volume:.2f}")
+                            continue
 
                         if available_volume <= 0:
                             continue
@@ -1332,13 +1689,13 @@ async def check_spot_arbitrage():
                                 f"Пропускаем {base}: недостаточная прибыль")
                             continue
 
-                        # Рассчитываем максимально возможную сумму входа
+                        # Рассчитываем максимально возможную сумму входа на основе доступного объема
                         max_possible_amount = min(
-                            available_volume,
-                            SETTINGS['SPOT']['MAX_ENTRY_AMOUNT_USDT'] / min_ex[1]['price'])
+                            available_volume * min_ex[1]['price'],
+                            SETTINGS['SPOT']['MAX_ENTRY_AMOUNT_USDT'],
+                            order_book_volume)
 
-                        max_entry_amount = max_possible_amount * min_ex[1][
-                            'price']
+                        max_entry_amount = max_possible_amount
                         min_entry_amount = max(min_amount_for_profit,
                                                SETTINGS['SPOT']['MIN_ENTRY_AMOUNT_USDT'])
 
@@ -1359,7 +1716,7 @@ async def check_spot_arbitrage():
                         profit_max = calculate_profit(
                             buy_price=min_ex[1]['price'],
                             sell_price=max_ex[1]['price'],
-                            amount=max_possible_amount,
+                            amount=max_possible_amount / min_ex[1]['price'],
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee)
 
@@ -1377,8 +1734,8 @@ async def check_spot_arbitrage():
                                 return f"${vol / 1_000:.1f}K"
                             return f"${vol:.1f}"
 
-                        min_volume = format_volume(min_ex[1]['volume'])
-                        max_volume = format_volume(max_ex[1]['volume'])
+                        min_volume = format_volume(volume_data.get(min_ex[0]))
+                        max_volume = format_volume(volume_data.get(max_ex[0]))
 
                         safe_base = html.escape(base)
                         buy_exchange_config = SPOT_EXCHANGES[min_ex[0]]
@@ -1395,6 +1752,7 @@ async def check_spot_arbitrage():
                             f"🚀 <b>Спотовый арбитраж:</b> <code>{safe_base}</code>\n"
                             f"▫️ <b>Разница цен:</b> {spread:.2f}%\n"
                             f"▫️ <b>Доступный объем:</b> {available_volume:.6f} {safe_base}\n"
+                            f"▫️ <b>Объем стакана:</b> ${order_book_volume:.2f}\n"
                             f"▫️ <b>Сумма входа:</b> ${min_entry_amount:.2f}-${max_entry_amount:.2f}\n\n"
                             f"🟢 <b>Покупка на <a href='{buy_url}'>{min_ex[0].upper()}</a>:</b> ${min_ex[1]['price']:.8f}\n"
                             f"   <b>Объём:</b> {min_volume}\n"
@@ -1418,8 +1776,18 @@ async def check_spot_arbitrage():
                         add_opportunity_to_sent(
                             'SPOT', base, min_ex[0], max_ex[0], spread,
                             min_ex[1]['price'], max_ex[1]['price'],
-                            min_ex[1]['volume'], max_ex[1]['volume'],
-                            min_entry_amount, max_entry_amount, profit_min, profit_max
+                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            min_entry_amount, max_entry_amount, profit_min, profit_max,
+                            available_volume, order_book_volume
+                        )
+
+                        # Обновляем текущие возможности с новой информацией
+                        update_current_arbitrage_opportunities(
+                            'SPOT', base, min_ex[0], max_ex[0], spread,
+                            min_ex[1]['price'], max_ex[1]['price'],
+                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            min_entry_amount, max_entry_amount, profit_min, profit_max,
+                            available_volume, order_book_volume
                         )
 
                         found_opportunities += 1
@@ -1427,7 +1795,7 @@ async def check_spot_arbitrage():
                 except Exception as e:
                     logger.error(f"Ошибка обработки пары {base}: {e}")
 
-            # Очищаем устаревшие возможности
+            # Очищаем устаревшие возможности (только старше 24 часов)
             cleanup_old_opportunities()
 
             logger.info(
@@ -1452,6 +1820,9 @@ async def check_futures_arbitrage():
     if len(FUTURES_EXCHANGES_LOADED) < SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']:
         logger.error(f"Недостаточно бирж (нужно минимум {SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']})")
         return
+
+    # Получаем актуальные ставки финансирования
+    funding_rates = await get_current_funding_rates()
 
     # Сбор всех торговых пар USDT
     all_pairs = defaultdict(set)
@@ -1515,31 +1886,55 @@ async def check_futures_arbitrage():
             found_opportunities = 0
             for base, exchange_symbols in valid_pairs.items():
                 try:
-                    ticker_data = {}
+                    # Проверяем общую волатильность монеты
+                    if not check_coin_volatility(base, 'FUTURES'):
+                        continue
 
-                    # Получаем данные тикеров для всех бирж
+                    price_data = {}
+                    volume_data = {}
+
+                    # Получаем данные цен из стакана и объемы из тикера для всех бирж
                     for name, symbol in exchange_symbols:
                         try:
-                            data = await fetch_ticker_data(FUTURES_EXCHANGES_LOADED[name]["api"], symbol)
-                            if data and data['price'] is not None:
+                            # Получаем цену из стакана
+                            price_info = await fetch_order_book_price(
+                                FUTURES_EXCHANGES_LOADED[name]["api"], symbol)
+                            
+                            # Получаем объем из тикера
+                            volume_info = await fetch_ticker_data(
+                                FUTURES_EXCHANGES_LOADED[name]["api"], symbol)
+                                
+                            if price_info and price_info['price'] is not None:
+                                # Обновляем историю цен для расчета волатильности
+                                update_price_history('FUTURES', base, name, price_info['price'])
+                                update_coin_volatility_history(base, price_info['price'])
+
+                                # Проверяем волатильность
+                                if not check_volatility('FUTURES', base, name, price_info['price']):
+                                    logger.debug(f"Пропускаем {base} на {name} из-за высокой волатильности")
+                                    continue
+
                                 # Если объем известен, проверяем минимальный объем
-                                if data['volume'] is None:
+                                volume = volume_info['volume'] if volume_info else None
+                                if volume is None:
                                     logger.debug(f"Объем неизвестен для {symbol} на {name}, но продолжаем обработку")
-                                    ticker_data[name] = data
-                                elif data['volume'] >= SETTINGS['FUTURES']['MIN_VOLUME_USD']:
-                                    ticker_data[name] = data
+                                    price_data[name] = price_info
+                                    volume_data[name] = volume
+                                elif volume >= SETTINGS['FUTURES']['MIN_VOLUME_USD']:
+                                    price_data[name] = price_info
+                                    volume_data[name] = volume
                                 else:
-                                    logger.debug(f"Объем {symbol} на {name} слишком мал: {data['volume']}")
+                                    logger.debug(f"Объем {symbol} на {name} слишком мал: {volume}")
                             else:
                                 logger.debug(f"Нет данных для {symbol} на {name}")
                         except Exception as e:
                             logger.warning(f"Ошибка получения данных {base} на {name}: {e}")
 
-                    if len(ticker_data) < SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']:
+                    if len(price_data) < SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']:
                         continue
 
-                    # Сортируем биржи по цене
-                    sorted_data = sorted(ticker_data.items(), key=lambda x: x[1]['price'])
+                    # Сортируем биржи по цене из стакана
+                    sorted_data = sorted(price_data.items(), key=lambda x: x[1]['price'])
                     min_ex = sorted_data[0]  # Самая низкая цена (покупка)
                     max_ex = sorted_data[-1]  # Самая высокая цена (продажа)
 
@@ -1550,11 +1945,23 @@ async def check_futures_arbitrage():
                         f"Пара {base}: спред {spread:.2f}% (min: {min_ex[0]} {min_ex[1]['price']}, max: {max_ex[0]} {max_ex[1]['price']})")
 
                     # Обновляем информацию о текущих арбитражных возможностях (только для отправленных связок)
-                    update_current_arbitrage_opportunities(
-                        'FUTURES', base, min_ex[0], max_ex[0], spread,
-                        min_ex[1]['price'], max_ex[1]['price'],
-                        min_ex[1]['volume'], max_ex[1]['volume']
-                    )
+                    key = f"FUTURES_{base}_{min_ex[0]}_{max_ex[0]}"
+                    if key in sent_arbitrage_opportunities:
+                        # Получаем текущую возможность и сохраняем существующие данные
+                        current_opp = sent_arbitrage_opportunities[key]
+                        update_current_arbitrage_opportunities(
+                            'FUTURES', base, min_ex[0], max_ex[0], spread,
+                            min_ex[1]['price'], max_ex[1]['price'],
+                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            current_opp.get('min_entry_amount'),
+                            current_opp.get('max_entry_amount'),
+                            current_opp.get('profit_min'),
+                            current_opp.get('profit_max'),
+                            current_opp.get('available_volume'),
+                            current_opp.get('order_book_volume'),
+                            current_opp.get('long_funding'),
+                            current_opp.get('short_funding')
+                        )
 
                     # Проверяем сходимость цен для уведомления (только для отправленных связок)
                     duration = update_arbitrage_duration('FUTURES', base, min_ex[0], max_ex[0], spread)
@@ -1562,11 +1969,55 @@ async def check_futures_arbitrage():
                         await send_price_convergence_notification(
                             'FUTURES', base, min_ex[0], max_ex[0],
                             min_ex[1]['price'], max_ex[1]['price'], spread,
-                            min_ex[1]['volume'], max_ex[1]['volume'], duration
+                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]), duration
                         )
 
                     if SETTINGS['FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['FUTURES'][
                         'MAX_THRESHOLD_PERCENT']:
+
+                        # Получаем ставки финансирования для обеих бирж
+                        long_funding = funding_rates.get(base, {}).get(min_ex[0], 0)
+                        short_funding = funding_rates.get(base, {}).get(max_ex[0], 0)
+
+                        # Проверяем выгодность финансирования
+                        if not is_favorable_funding(long_funding, short_funding):
+                            logger.debug(
+                                f"Пропускаем {base} из-за невыгодного финансирования: лонг {long_funding:.4f}%, шорт {short_funding:.4f}%")
+                            continue
+
+                        # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: пропускаем связки с "красным" фандингом
+                        if has_red_funding(long_funding, short_funding):
+                            logger.debug(
+                                f"Пропускаем {base} из-за красного фандинга: лонг {long_funding:.4f}%, шорт {short_funding:.4f}%")
+                            continue
+
+                        # Получаем стаканы ордеров для фьючерсов
+                        buy_exchange = FUTURES_EXCHANGES_LOADED[min_ex[0]]["api"]
+                        sell_exchange = FUTURES_EXCHANGES_LOADED[max_ex[0]]["api"]
+                        buy_symbol = min_ex[1]['symbol']
+                        sell_symbol = max_ex[1]['symbol']
+
+                        buy_order_book, sell_order_book = await asyncio.gather(
+                            fetch_order_book(buy_exchange, buy_symbol, depth=10),
+                            fetch_order_book(sell_exchange, sell_symbol, depth=10))
+
+                        if not buy_order_book or not sell_order_book:
+                            logger.debug(f"Пропускаем {base}: нет данных стакана")
+                            continue
+
+                        # Рассчитываем доступный объем из стакана
+                        buy_volume, buy_value = calculate_available_volume(
+                            buy_order_book, 'buy', SETTINGS['FUTURES']['MAX_IMPACT_PERCENT'])
+                        sell_volume, sell_value = calculate_available_volume(
+                            sell_order_book, 'sell', SETTINGS['FUTURES']['MAX_IMPACT_PERCENT'])
+                        available_volume = min(buy_volume, sell_volume)
+                        order_book_volume = min(buy_value, sell_value)
+
+                        # Проверяем минимальный объем стакана
+                        if order_book_volume < SETTINGS['FUTURES']['MIN_ORDER_BOOK_VOLUME']:
+                            logger.debug(f"Пропускаем {base}: объем стакана слишком мал: ${order_book_volume:.2f}")
+                            continue
+
                         # Получаем комиссии
                         buy_fee = FUTURES_EXCHANGES_LOADED[min_ex[0]]["config"]["taker_fee"]
                         sell_fee = FUTURES_EXCHANGES_LOADED[max_ex[0]]["config"]["taker_fee"]
@@ -1585,14 +2036,19 @@ async def check_futures_arbitrage():
                             continue
 
                         # Рассчитываем максимально возможную сумму входа
-                        max_entry_amount = SETTINGS['FUTURES']['MAX_ENTRY_AMOUNT_USDT']
+                        max_possible_amount = min(
+                            available_volume * min_ex[1]['price'],
+                            SETTINGS['FUTURES']['MAX_ENTRY_AMOUNT_USDT'],
+                            order_book_volume)
+
+                        max_entry_amount = max_possible_amount
                         min_entry_amount = max(min_amount_for_profit, SETTINGS['FUTURES']['MIN_ENTRY_AMOUNT_USDT'])
 
                         if min_entry_amount > max_entry_amount:
                             logger.debug(f"Пропускаем {base}: min_entry_amount > max_entry_amount")
                             continue
 
-                        # Рассчитываем прибыль
+                        # Рассчитываем базовую прибыль
                         profit_min = calculate_profit(
                             buy_price=min_ex[1]['price'],
                             sell_price=max_ex[1]['price'],
@@ -1604,10 +2060,16 @@ async def check_futures_arbitrage():
                         profit_max = calculate_profit(
                             buy_price=min_ex[1]['price'],
                             sell_price=max_ex[1]['price'],
-                            amount=max_entry_amount / min_ex[1]['price'],
+                            amount=max_possible_amount / min_ex[1]['price'],
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee
                         )
+
+                        # Рассчитываем эффективную прибыль с учетом финансирования
+                        effective_profit_min = calculate_effective_profit_with_funding(
+                            profit_min['net'], min_entry_amount, long_funding, short_funding)
+                        effective_profit_max = calculate_effective_profit_with_funding(
+                            profit_max['net'], max_entry_amount, long_funding, short_funding)
 
                         # Форматируем сообщение
                         utc_plus_3 = timezone(timedelta(hours=3))
@@ -1622,8 +2084,8 @@ async def check_futures_arbitrage():
                                 return f"${vol / 1_000:.1f}K"
                             return f"${vol:.1f}"
 
-                        min_volume = format_volume(min_ex[1]['volume'])
-                        max_volume = format_volume(max_ex[1]['volume'])
+                        min_volume = format_volume(volume_data.get(min_ex[0]))
+                        max_volume = format_volume(volume_data.get(max_ex[0]))
 
                         safe_base = html.escape(base)
                         buy_exchange_config = FUTURES_EXCHANGES[min_ex[0]]
@@ -1632,17 +2094,29 @@ async def check_futures_arbitrage():
                         buy_url = buy_exchange_config["url_format"](min_ex[1]['symbol'].replace(':USDT', ''))
                         sell_url = sell_exchange_config["url_format"](max_ex[1]['symbol'].replace(':USDT', ''))
 
+                        # Рассчитываем оценку финансирования
+                        funding_score = calculate_funding_score(long_funding, short_funding)
+                        funding_emoji = "🟢"
+                        if has_red_funding(long_funding, short_funding):
+                            funding_emoji = "🔴"
+                        elif funding_score > 0:
+                            funding_emoji = "🟡"
+
                         message = (
                             f"📊 <b>Фьючерсный арбитраж:</b> <code>{safe_base}</code>\n"
                             f"▫️ <b>Разница цен:</b> {spread:.2f}%\n"
-                            f"▫️ <b>Сумма входа:</b> ${min_entry_amount:.2f}-${max_entry_amount:.2f}\n\n"
+                            f"▫️ <b>Доступный объем:</b> {available_volume:.6f} {safe_base}\n"
+                            f"▫️ <b>Объем стакана:</b> ${order_book_volume:.2f}\n"
+                            f"▫️ <b>Сумма входа:</b> ${min_entry_amount:.2f}-${max_entry_amount:.2f}\n"
+                            f"▫️ {funding_emoji} <b>Фандинг:</b> лонг {long_funding:.4f}% | шорт {short_funding:.4f}% | общий {funding_score:.4f}%\n\n"
                             f"🟢 <b>Лонг на <a href='{buy_url}'>{min_ex[0].upper()}</a>:</b> ${min_ex[1]['price']:.8f}\n"
                             f"   <b>Объём:</b> {min_volume}\n"
                             f"   <b>Комиссия:</b> {buy_fee * 100:.3f}%\n\n"
                             f"🔴 <b>Шорт на <a href='{sell_url}'>{max_ex[0].upper()}</a>:</b> ${max_ex[1]['price']:.8f}\n"
                             f"   <b>Объём:</b> {max_volume}\n"
                             f"   <b>Комиссия:</b> {sell_fee * 100:.3f}%\n\n"
-                            f"💰 <b>Чистая прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f} ({profit_max['percent']:.2f}%)\n\n"
+                            f"💰 <b>Базовая прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f}\n"
+                            f"💎 <b>С учетом фандинга:</b> ${effective_profit_min:.2f}-${effective_profit_max:.2f} ({profit_max['percent']:.2f}%)\n\n"
                             f"⏱ {current_time}\n"
                         )
 
@@ -1655,8 +2129,20 @@ async def check_futures_arbitrage():
                         add_opportunity_to_sent(
                             'FUTURES', base, min_ex[0], max_ex[0], spread,
                             min_ex[1]['price'], max_ex[1]['price'],
-                            min_ex[1]['volume'], max_ex[1]['volume'],
-                            min_entry_amount, max_entry_amount, profit_min, profit_max
+                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            min_entry_amount, max_entry_amount, profit_min, profit_max,
+                            available_volume, order_book_volume,
+                            long_funding, short_funding
+                        )
+
+                        # Обновляем текущие возможности с новой информацией
+                        update_current_arbitrage_opportunities(
+                            'FUTURES', base, min_ex[0], max_ex[0], spread,
+                            min_ex[1]['price'], max_ex[1]['price'],
+                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            min_entry_amount, max_entry_amount, profit_min, profit_max,
+                            available_volume, order_book_volume,
+                            long_funding, short_funding
                         )
 
                         found_opportunities += 1
@@ -1664,7 +2150,7 @@ async def check_futures_arbitrage():
                 except Exception as e:
                     logger.error(f"Ошибка обработки пары {base}: {e}")
 
-            # Очищаем устаревшие возможности
+            # Очищаем устаревшие возможности (только старше 24 часов)
             cleanup_old_opportunities()
 
             logger.info(f"Цикл фьючерсного арбитража завершен. Найдено возможностей: {found_opportunities}")
@@ -1680,7 +2166,7 @@ async def check_spot_futures_arbitrage():
     logger.info("Запуск проверки спот-фьючерсного арбитража")
 
     if not SETTINGS['SPOT_FUTURES']['ENABLED']:
-        logger.info("Спот-фьючерсный арбитраж отключен в настройках")
+        logger.info("Спот-фьючерсный арбитраж отключен в настройки")
         return
 
     # Инициализация бирж
@@ -1785,37 +2271,77 @@ async def check_spot_futures_arbitrage():
             found_opportunities = 0
             for base in common_pairs:
                 try:
-                    spot_ticker_data = {}
-                    futures_ticker_data = {}
+                    # Проверяем общую волатильность монеты
+                    if not check_coin_volatility(base, 'SPOT_FUTURES'):
+                        continue
 
-                    # Получаем данные тикеров для спотовых бирж
+                    spot_price_data = {}
+                    spot_volume_data = {}
+                    futures_price_data = {}
+                    futures_volume_data = {}
+
+                    # Получаем данные цен из стакана и объемы из тикера для спотовых бирж
                     for name, symbol in spot_pairs[base]:
                         try:
-                            data = await fetch_ticker_data(SPOT_EXCHANGES_LOADED[name]["api"], symbol)
-                            if data and data['price'] is not None:
-                                if data['volume'] is None or data['volume'] >= SETTINGS['SPOT_FUTURES'][
-                                    'MIN_VOLUME_USD']:
-                                    spot_ticker_data[name] = data
+                            # Получаем цену из стакана
+                            price_info = await fetch_order_book_price(
+                                SPOT_EXCHANGES_LOADED[name]["api"], symbol)
+                            
+                            # Получаем объем из тикера
+                            volume_info = await fetch_ticker_data(
+                                SPOT_EXCHANGES_LOADED[name]["api"], symbol)
+                                
+                            if price_info and price_info['price'] is not None:
+                                # Обновляем историю цен для расчета волатильности
+                                update_price_history('SPOT_FUTURES', base, f"{name}_spot", price_info['price'])
+                                update_coin_volatility_history(base, price_info['price'])
+
+                                # Проверяем волатильность
+                                if not check_volatility('SPOT_FUTURES', base, f"{name}_spot", price_info['price']):
+                                    logger.debug(f"Пропускаем {base} на {name} (спот) из-за высокой волатильности")
+                                    continue
+
+                                volume = volume_info['volume'] if volume_info else None
+                                if volume is None or volume >= SETTINGS['SPOT_FUTURES']['MIN_VOLUME_USD']:
+                                    spot_price_data[name] = price_info
+                                    spot_volume_data[name] = volume
                         except Exception as e:
                             logger.warning(f"Ошибка получения спотовых данных {base} на {name}: {e}")
 
-                    # Получаем данные тикеров для фьючерсных бирж
+                    # Получаем данные цен из стакана и объемы из тикера для фьючерсных бирж
                     for name, symbol in futures_pairs[base]:
                         try:
-                            data = await fetch_ticker_data(FUTURES_EXCHANGES_LOADED[name]["api"], symbol)
-                            if data and data['price'] is not None:
-                                if data['volume'] is None or data['volume'] >= SETTINGS['SPOT_FUTURES'][
-                                    'MIN_VOLUME_USD']:
-                                    futures_ticker_data[name] = data
+                            # Получаем цену из стакана
+                            price_info = await fetch_order_book_price(
+                                FUTURES_EXCHANGES_LOADED[name]["api"], symbol)
+                            
+                            # Получаем объем из тикера
+                            volume_info = await fetch_ticker_data(
+                                FUTURES_EXCHANGES_LOADED[name]["api"], symbol)
+                                
+                            if price_info and price_info['price'] is not None:
+                                # Обновляем историю цен для расчета волатильности
+                                update_price_history('SPOT_FUTURES', base, f"{name}_futures", price_info['price'])
+                                update_coin_volatility_history(base, price_info['price'])
+
+                                # Проверяем волатильность
+                                if not check_volatility('SPOT_FUTURES', base, f"{name}_futures", price_info['price']):
+                                    logger.debug(f"Пропускаем {base} на {name} (фьючерсы) из-за высокой волатильности")
+                                    continue
+
+                                volume = volume_info['volume'] if volume_info else None
+                                if volume is None or volume >= SETTINGS['SPOT_FUTURES']['MIN_VOLUME_USD']:
+                                    futures_price_data[name] = price_info
+                                    futures_volume_data[name] = volume
                         except Exception as e:
                             logger.warning(f"Ошибка получения фьючерсных данных {base} на {name}: {e}")
 
-                    if not spot_ticker_data or not futures_ticker_data:
+                    if not spot_price_data or not futures_price_data:
                         continue
 
                     # Находим лучшие цены
-                    min_spot = min(spot_ticker_data.items(), key=lambda x: x[1]['price'])
-                    max_futures = max(futures_ticker_data.items(), key=lambda x: x[1]['price'])
+                    min_spot = min(spot_price_data.items(), key=lambda x: x[1]['price'])
+                    max_futures = max(futures_price_data.items(), key=lambda x: x[1]['price'])
 
                     # Рассчитываем спред
                     spread = (max_futures[1]['price'] - min_spot[1]['price']) / min_spot[1]['price'] * 100
@@ -1824,11 +2350,21 @@ async def check_spot_futures_arbitrage():
                         f"Пара {base}: спред {spread:.2f}% (spot: {min_spot[0]} {min_spot[1]['price']}, futures: {max_futures[0]} {max_futures[1]['price']})")
 
                     # Обновляем информацию о текущих арбитражных возможностях (только для отправленных связок)
-                    update_current_arbitrage_opportunities(
-                        'SPOT_FUTURES', base, min_spot[0], max_futures[0], spread,
-                        min_spot[1]['price'], max_futures[1]['price'],
-                        min_spot[1]['volume'], max_futures[1]['volume']
-                    )
+                    key = f"SPOT_FUTURES_{base}_{min_spot[0]}_{max_futures[0]}"
+                    if key in sent_arbitrage_opportunities:
+                        # Получаем текущую возможность и сохраняем существующие данные
+                        current_opp = sent_arbitrage_opportunities[key]
+                        update_current_arbitrage_opportunities(
+                            'SPOT_FUTURES', base, min_spot[0], max_futures[0], spread,
+                            min_spot[1]['price'], max_futures[1]['price'],
+                            spot_volume_data.get(min_spot[0]), futures_volume_data.get(max_futures[0]),
+                            current_opp.get('min_entry_amount'),
+                            current_opp.get('max_entry_amount'),
+                            current_opp.get('profit_min'),
+                            current_opp.get('profit_max'),
+                            current_opp.get('available_volume'),
+                            current_opp.get('order_book_volume')
+                        )
 
                     # Проверяем сходимость цен для уведомления (только для отправленных связок)
                     duration = update_arbitrage_duration('SPOT_FUTURES', base, min_spot[0], max_futures[0], spread)
@@ -1836,7 +2372,7 @@ async def check_spot_futures_arbitrage():
                         await send_price_convergence_notification(
                             'SPOT_FUTURES', base, min_spot[0], max_futures[0],
                             min_spot[1]['price'], max_futures[1]['price'], spread,
-                            min_spot[1]['volume'], max_futures[1]['volume'], duration
+                            spot_volume_data.get(min_spot[0]), futures_volume_data.get(max_futures[0]), duration
                         )
 
                     if SETTINGS['SPOT_FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['SPOT_FUTURES'][
@@ -1849,6 +2385,33 @@ async def check_spot_futures_arbitrage():
 
                         if not (deposit_available and withdrawal_available):
                             logger.debug(f"Пропускаем {base}: депозит или вывод недоступен")
+                            continue
+
+                        # Получаем стаканы ордеров
+                        spot_exchange = SPOT_EXCHANGES_LOADED[min_spot[0]]["api"]
+                        futures_exchange = FUTURES_EXCHANGES_LOADED[max_futures[0]]["api"]
+                        spot_symbol = min_spot[1]['symbol']
+                        futures_symbol = max_futures[1]['symbol']
+
+                        spot_order_book, futures_order_book = await asyncio.gather(
+                            fetch_order_book(spot_exchange, spot_symbol),
+                            fetch_order_book(futures_exchange, futures_symbol, depth=10))
+
+                        if not spot_order_book or not futures_order_book:
+                            logger.debug(f"Пропускаем {base}: нет данных стакана")
+                            continue
+
+                        # Рассчитываем доступный объем из стакана
+                        spot_volume, spot_value = calculate_available_volume(
+                            spot_order_book, 'buy', SETTINGS['SPOT_FUTURES']['MAX_IMPACT_PERCENT'])
+                        futures_volume, futures_value = calculate_available_volume(
+                            futures_order_book, 'sell', SETTINGS['SPOT_FUTURES']['MAX_IMPACT_PERCENT'])
+                        available_volume = min(spot_volume, futures_volume)
+                        order_book_volume = min(spot_value, futures_value)
+
+                        # Проверяем минимальный объем стакана
+                        if order_book_volume < SETTINGS['SPOT_FUTURES']['MIN_ORDER_BOOK_VOLUME']:
+                            logger.debug(f"Пропускаем {base}: объем стакана слишком мал: ${order_book_volume:.2f}")
                             continue
 
                         # Получаем комиссии
@@ -1869,7 +2432,12 @@ async def check_spot_futures_arbitrage():
                             continue
 
                         # Рассчитываем максимально возможную сумму входа
-                        max_entry_amount = SETTINGS['SPOT_FUTURES']['MAX_ENTRY_AMOUNT_USDT']
+                        max_possible_amount = min(
+                            available_volume * min_spot[1]['price'],
+                            SETTINGS['SPOT_FUTURES']['MAX_ENTRY_AMOUNT_USDT'],
+                            order_book_volume)
+
+                        max_entry_amount = max_possible_amount
                         min_entry_amount = max(min_amount_for_profit, SETTINGS['SPOT_FUTURES']['MIN_ENTRY_AMOUNT_USDT'])
 
                         if min_entry_amount > max_entry_amount:
@@ -1888,7 +2456,7 @@ async def check_spot_futures_arbitrage():
                         profit_max = calculate_profit(
                             buy_price=min_spot[1]['price'],
                             sell_price=max_futures[1]['price'],
-                            amount=max_entry_amount / min_spot[1]['price'],
+                            amount=max_possible_amount / min_spot[1]['price'],
                             buy_fee_percent=spot_fee,
                             sell_fee_percent=futures_fee
                         )
@@ -1906,8 +2474,8 @@ async def check_spot_futures_arbitrage():
                                 return f"${vol / 1_000:.1f}K"
                             return f"${vol:.1f}"
 
-                        spot_volume = format_volume(min_spot[1]['volume'])
-                        futures_volume = format_volume(max_futures[1]['volume'])
+                        spot_volume_str = format_volume(spot_volume_data.get(min_spot[0]))
+                        futures_volume_str = format_volume(futures_volume_data.get(max_futures[0]))
 
                         safe_base = html.escape(base)
                         spot_exchange_config = SPOT_EXCHANGES[min_spot[0]]
@@ -1922,13 +2490,15 @@ async def check_spot_futures_arbitrage():
                         message = (
                             f"↔️ <b>Спот-Фьючерсный арбитраж:</b> <code>{safe_base}</code>\n"
                             f"▫️ <b>Разница цен:</b> {spread:.2f}%\n"
+                            f"▫️ <b>Доступный объем:</b> {available_volume:.6f} {safe_base}\n"
+                            f"▫️ <b>Объем стакана:</b> ${order_book_volume:.2f}\n"
                             f"▫️ <b>Сумма входа:</b> ${min_entry_amount:.2f}-${max_entry_amount:.2f}\n\n"
                             f"🟢 <b>Покупка на споте <a href='{spot_url}'>{min_spot[0].upper()}</a>:</b> ${min_spot[1]['price']:.8f}\n"
-                            f"   <b>Объём:</b> {spot_volume}\n"
+                            f"   <b>Объём:</b> {spot_volume_str}\n"
                             f"   <b>Комиссия:</b> {spot_fee * 100:.2f}%\n"
                             f"   <b><a href='{withdraw_url}'>Вывод</a> | <a href='{deposit_url}'>Депозит</a></b>\n\n"
                             f"🔴 <b>Шорт на фьючерсах <a href='{futures_url}'>{max_futures[0].upper()}</a>:</b> ${max_futures[1]['price']:.8f}\n"
-                            f"   <b>Объём:</b> {futures_volume}\n"
+                            f"   <b>Объём:</b> {futures_volume_str}\n"
                             f"   <b>Комиссия:</b> {futures_fee * 100:.3f}%\n\n"
                             f"💰 <b>Чистая прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f} ({profit_max['percent']:.2f}%)\n\n"
                             f"⏱ {current_time}\n"
@@ -1943,8 +2513,18 @@ async def check_spot_futures_arbitrage():
                         add_opportunity_to_sent(
                             'SPOT_FUTURES', base, min_spot[0], max_futures[0], spread,
                             min_spot[1]['price'], max_futures[1]['price'],
-                            min_spot[1]['volume'], max_futures[1]['volume'],
-                            min_entry_amount, max_entry_amount, profit_min, profit_max
+                            spot_volume_data.get(min_spot[0]), futures_volume_data.get(max_futures[0]),
+                            min_entry_amount, max_entry_amount, profit_min, profit_max,
+                            available_volume, order_book_volume
+                        )
+
+                        # Обновляем текущие возможности с новой информацией
+                        update_current_arbitrage_opportunities(
+                            'SPOT_FUTURES', base, min_spot[0], max_futures[0], spread,
+                            min_spot[1]['price'], max_futures[1]['price'],
+                            spot_volume_data.get(min_spot[0]), futures_volume_data.get(max_futures[0]),
+                            min_entry_amount, max_entry_amount, profit_min, profit_max,
+                            available_volume, order_book_volume
                         )
 
                         found_opportunities += 1
@@ -1952,7 +2532,7 @@ async def check_spot_futures_arbitrage():
                 except Exception as e:
                     logger.error(f"Ошибка обработки пары {base}: {e}")
 
-            # Очищаем устаревшие возможности
+            # Очищаем устаревшие возможности (только старше 24 часов)
             cleanup_old_opportunities()
 
             logger.info(f"Цикл спот-фьючерсного арбитража завершен. Найдено возможностей: {found_opportunities}")
@@ -2041,17 +2621,21 @@ async def get_coin_prices(coin: str, market_type: str):
             if (market_type == "spot" and config["is_spot"](market)) or \
                     (market_type == "futures" and config["is_futures"](market)):
 
-                ticker = await fetch_ticker_data(exchange, symbol)
-                if ticker and ticker['price']:
+                # Получаем цену из стакана
+                price_info = await fetch_order_book_price(exchange, symbol)
+                if price_info and price_info['price']:
+                    # Получаем объем из тикера
+                    volume_info = await fetch_ticker_data(exchange, symbol)
+                    volume = volume_info['volume'] if volume_info else None
+                    
                     # Проверяем объем - фильтруем по минимальному объему из настроек
-                    if ticker.get('volume') is not None and ticker['volume'] < min_volume:
+                    if volume is not None and volume < min_volume:
                         filtered_out += 1
-                        logger.debug(f"Биржа {name} отфильтрована по объему: {ticker['volume']} < {min_volume}")
+                        logger.debug(f"Биржа {name} отфильтрована по объему: {volume} < {min_volume}")
                         continue
 
                     found_on += 1
-                    price = ticker['price']
-                    volume = ticker.get('volume')
+                    price = price_info['price']
 
                     # Получаем URL для биржи
                     url = config["url_format"](symbol)
@@ -2183,43 +2767,69 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SETTINGS_MENU
 
     elif text == "📈 Актуальные связки":
-        # Показываем "Загрузка..."
-        await update.message.reply_text(
-            "⏳ Загружаем информацию о текущих арбитражных возможностях...",
-            parse_mode="HTML"
+        # Устанавливаем начальную страницу
+        context.user_data['arbitrage_page'] = 0
+        context.user_data['arbitrage_per_page'] = 5
+
+        # Получаем первую страницу
+        message, total_pages, current_page = await get_current_arbitrage_opportunities_page(
+            page=0, opportunities_per_page=5
         )
 
-        # Получаем текущие арбитражные возможности
-        response = await get_current_arbitrage_opportunities()
+        # Сохраняем данные пагинации
+        context.user_data['arbitrage_total_pages'] = total_pages
+        context.user_data['arbitrage_current_page'] = current_page
 
-        # Отправляем результаты
+        # Отправляем сообщение с клавиатурой пагинации
         await update.message.reply_text(
-            text=response,
+            text=message,
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=get_main_keyboard()
+            reply_markup=get_arbitrage_list_keyboard(current_page, total_pages)
         )
-        return
+        return ARBITRAGE_LIST
 
     elif text == "📊 Статус бота":
-        spot_status = "✅ ВКЛ" if SETTINGS['SPOT']['ENABLED'] else "❌ ВЫКЛ"
-        futures_status = "✅ ВКЛ" if SETTINGS['FUTURES']['ENABLED'] else "❌ ВЫКЛ"
-        spot_futures_status = "✅ ВКЛ" if SETTINGS['SPOT_FUTURES']['ENABLED'] else "❌ ВЫКЛ"
+        try:
+            spot_status = "✅ ВКЛ" if SETTINGS['SPOT']['ENABLED'] else "❌ ВЫКЛ"
+            futures_status = "✅ ВКЛ" if SETTINGS['FUTURES']['ENABLED'] else "❌ ВЫКЛ"
+            spot_futures_status = "✅ ВКЛ" if SETTINGS['SPOT_FUTURES']['ENABLED'] else "❌ ВЫКЛ"
 
-        enabled_exchanges = [name for name, config in SETTINGS['EXCHANGES'].items() if config['ENABLED']]
-        exchanges_status = ", ".join(enabled_exchanges) if enabled_exchanges else "Нет активных бирж"
+            enabled_exchanges = [name for name, config in SETTINGS['EXCHANGES'].items() if config['ENABLED']]
+            exchanges_status = ", ".join(enabled_exchanges) if enabled_exchanges else "Нет активных бирж"
 
-        await update.message.reply_text(
-            f"🤖 <b>Статус бота</b>\n\n"
-            f"🚀 Спотовый арбитраж: {spot_status}\n"
-            f"📊 Фьючерсный арбитраж: {futures_status}\n"
-            f"↔️ Спот-Фьючерсный арбитраж: {spot_futures_status}\n"
-            f"🏛 Активные биржи: {exchanges_status}\n"
-            f"📈 Активных связок: {len(sent_arbitrage_opportunities)}",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-        return
+            # Получаем информацию о финансировании
+            funding_info = ""
+            if SETTINGS['FUTURES']['ENABLED']:
+                try:
+                    funding_rates = await get_current_funding_rates()
+                    funding_info = f"\n💰 Активных ставок фандинга: {len(funding_rates)}"
+                except Exception as e:
+                    logger.error(f"Ошибка при получении ставок финансирования: {e}")
+                    funding_info = f"\n💰 Не удалось загрузить ставки фандинга"
+
+            status_message = (
+                f"🤖 <b>Статус бота</b>\n\n"
+                f"🚀 Спотовый арбитраж: {spot_status}\n"
+                f"📊 Фьючерсный арбитраж: {futures_status}\n"
+                f"↔️ Спот-Фьючерсный арбитраж: {spot_futures_status}\n"
+                f"🏛 Активные биржи: {exchanges_status}\n"
+                f"📈 Активных связок: {len(sent_arbitrage_opportunities)}"
+                f"{funding_info}"
+            )
+
+            await update.message.reply_text(
+                status_message,
+                parse_mode="HTML",
+                reply_markup=get_main_keyboard()
+            )
+        except Exception as e:
+            logger.error(f"Ошибка в обработчике статуса бота: {e}")
+            await update.message.reply_text(
+                "❌ Произошла ошибка при получении статуса бота.",
+                reply_markup=get_main_keyboard()
+            )
+        return ConversationHandler.END
 
     elif text == "ℹ️ Помощь":
         await update.message.reply_text(
@@ -2228,11 +2838,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔧 <b>Настройки</b> - позволяет настроить параметры арбитража\n"
             "📊 <b>Статус бота</b> - показывает текущее состояние бота\n"
             "📈 <b>Актуальные связки</b> - показывает текущие арбитражные возможности и их длительность\n\n"
+            "<b>Особенности фьючерсного арбитража:</b>\n"
+            "• Учитывает ставки финансирования (funding rate)\n"
+            "• Фильтрует невыгодные связки с высокими платежами\n"
+            "• Показывает эффективную прибыль с учетом фандинга\n\n"
             "Бот автоматически ищет арбитражные возможности и присылает уведомления.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
-        return
+        return ConversationHandler.END
 
     # Если это не команда, предполагаем, что это название монеты
     if not text.startswith('/'):
@@ -2254,12 +2868,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⚠️ Неверный формат названия монеты. Используйте только буквы и цифры (например BTC или ETH)",
                 reply_markup=get_main_keyboard()
             )
-            return
+            return ConversationHandler.END
 
     await update.message.reply_text(
         "Неизвестная команда. Используйте кнопки меню.",
         reply_markup=get_main_keyboard()
     )
+    return ConversationHandler.END
 
 
 async def handle_coin_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2312,6 +2927,54 @@ async def handle_coin_selection(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=get_main_keyboard()
     )
     return ConversationHandler.END
+
+
+async def handle_arbitrage_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка навигации по списку арбитражных связок"""
+    text = update.message.text
+    user_id = str(update.effective_user.id)
+
+    # Получаем текущие данные пагинации
+    current_page = context.user_data.get('arbitrage_page', 0)
+    total_pages = context.user_data.get('arbitrage_total_pages', 1)
+    per_page = context.user_data.get('arbitrage_per_page', 5)
+
+    if text == "⬅️ Предыдущая":
+        if current_page > 0:
+            current_page -= 1
+    elif text == "Следующая ➡️":
+        if current_page < total_pages - 1:
+            current_page += 1
+    elif text == "🔙 Главное меню":
+        await update.message.reply_text(
+            "Главное меню:",
+            reply_markup=get_main_keyboard()
+        )
+        return ConversationHandler.END
+    else:
+        # Если нажата другая кнопка, остаемся на текущей странице
+        pass
+
+    # Обновляем данные пагинации
+    context.user_data['arbitrage_page'] = current_page
+    context.user_data['arbitrage_current_page'] = current_page
+
+    # Получаем данные для текущей страницы
+    message, total_pages, current_page = await get_current_arbitrage_opportunities_page(
+        page=current_page, opportunities_per_page=per_page
+    )
+
+    # Обновляем общее количество страниц
+    context.user_data['arbitrage_total_pages'] = total_pages
+
+    # Отправляем обновленное сообщение
+    await update.message.reply_text(
+        text=message,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=get_arbitrage_list_keyboard(current_page, total_pages)
+    )
+    return ARBITRAGE_LIST
 
 
 async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2473,6 +3136,27 @@ async def handle_spot_settings(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return SPOT_SETTINGS
 
+    elif text.startswith("Волатильность:"):
+        context.user_data['setting'] = ('SPOT', 'VOLATILITY_THRESHOLD')
+        await update.message.reply_text(
+            f"Введите новое значение для порога волатильности (текущее: {SETTINGS['SPOT']['VOLATILITY_THRESHOLD']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Мин. объем стакана:"):
+        context.user_data['setting'] = ('SPOT', 'MIN_ORDER_BOOK_VOLUME')
+        await update.message.reply_text(
+            f"Введите новое значение для минимального объема стакана (текущее: ${SETTINGS['SPOT']['MIN_ORDER_BOOK_VOLUME']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. волатильность:"):
+        context.user_data['setting'] = ('SPOT', 'MAX_VOLATILITY_PERCENT')
+        await update.message.reply_text(
+            f"Введите новое значение для максимальной волатильности монеты (текущее: {SETTINGS['SPOT']['MAX_VOLATILITY_PERCENT']}%):"
+        )
+        return SETTING_VALUE
+
     elif text.startswith("Статус:"):
         SETTINGS['SPOT']['ENABLED'] = not SETTINGS['SPOT']['ENABLED']
         save_settings(SETTINGS)
@@ -2568,6 +3252,48 @@ async def handle_futures_settings(update: Update, context: ContextTypes.DEFAULT_
             reply_markup=get_futures_settings_keyboard()
         )
         return FUTURES_SETTINGS
+
+    elif text.startswith("Волатильность:"):
+        context.user_data['setting'] = ('FUTURES', 'VOLATILITY_THRESHOLD')
+        await update.message.reply_text(
+            f"Введите новое значение для порога волатильности (текущее: {SETTINGS['FUTURES']['VOLATILITY_THRESHOLD']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Мин. объем стакана:"):
+        context.user_data['setting'] = ('FUTURES', 'MIN_ORDER_BOOK_VOLUME')
+        await update.message.reply_text(
+            f"Введите новое значение для минимального объема стакана (текущее: ${SETTINGS['FUTURES']['MIN_ORDER_BOOK_VOLUME']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. фандинг:"):
+        context.user_data['setting'] = ('FUTURES', 'FUNDING_RATE_THRESHOLD')
+        await update.message.reply_text(
+            f"Введите новое значение для максимальной ставки финансирования (текущее: {SETTINGS['FUTURES']['FUNDING_RATE_THRESHOLD']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Мин. фандинг:"):
+        context.user_data['setting'] = ('FUTURES', 'MIN_FUNDING_RATE_TO_RECEIVE')
+        await update.message.reply_text(
+            f"Введите новое значение для минимальной ставки финансирования (текущее: {SETTINGS['FUTURES']['MIN_FUNDING_RATE_TO_RECEIVE']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Красный фандинг:"):
+        context.user_data['setting'] = ('FUTURES', 'RED_FUNDING_THRESHOLD')
+        await update.message.reply_text(
+            f"Введите новое значение для порога красного фандинга (текущее: {SETTINGS['FUTURES']['RED_FUNDING_THRESHOLD']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. волатильность:"):
+        context.user_data['setting'] = ('FUTURES', 'MAX_VOLATILITY_PERCENT')
+        await update.message.reply_text(
+            f"Введите новое значение для максимальной волатильности монеты (текущее: {SETTINGS['FUTURES']['MAX_VOLATILITY_PERCENT']}%):"
+        )
+        return SETTING_VALUE
 
     elif text.startswith("Статус:"):
         SETTINGS['FUTURES']['ENABLED'] = not SETTINGS['FUTURES']['ENABLED']
@@ -2666,6 +3392,27 @@ async def handle_spot_futures_settings(update: Update, context: ContextTypes.DEF
         )
         return SPOT_FUTURES_SETTINGS
 
+    elif text.startswith("Волатильность:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'VOLATILITY_THRESHOLD')
+        await update.message.reply_text(
+            f"Введите новое значение для порога волатильности (текущее: {SETTINGS['SPOT_FUTURES']['VOLATILITY_THRESHOLD']}%):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Мин. объем стакана:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'MIN_ORDER_BOOK_VOLUME')
+        await update.message.reply_text(
+            f"Введите новое значение для минимального объема стакана (текущее: ${SETTINGS['SPOT_FUTURES']['MIN_ORDER_BOOK_VOLUME']}):"
+        )
+        return SETTING_VALUE
+
+    elif text.startswith("Макс. волатильность:"):
+        context.user_data['setting'] = ('SPOT_FUTURES', 'MAX_VOLATILITY_PERCENT')
+        await update.message.reply_text(
+            f"Введите новое значение для максимальной волатильности монеты (текущее: {SETTINGS['SPOT_FUTURES']['MAX_VOLATILITY_PERCENT']}%):"
+        )
+        return SETTING_VALUE
+
     elif text.startswith("Статус:"):
         SETTINGS['SPOT_FUTURES']['ENABLED'] = not SETTINGS['SPOT_FUTURES']['ENABLED']
         save_settings(SETTINGS)
@@ -2732,11 +3479,14 @@ async def handle_setting_value(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         # Обработка числовых значений
         if setting_key in ['THRESHOLD_PERCENT', 'MAX_THRESHOLD_PERCENT', 'MAX_IMPACT_PERCENT',
-                           'PRICE_CONVERGENCE_THRESHOLD']:
+                           'PRICE_CONVERGENCE_THRESHOLD', 'VOLATILITY_THRESHOLD',
+                           'FUNDING_RATE_THRESHOLD', 'MIN_FUNDING_RATE_TO_RECEIVE', 'IDEAL_FUNDING_SCENARIO',
+                           'RED_FUNDING_THRESHOLD', 'MAX_VOLATILITY_PERCENT']:
             value = float(text)
-        elif setting_key in ['CHECK_INTERVAL', 'ORDER_BOOK_DEPTH']:
+        elif setting_key in ['CHECK_INTERVAL', 'ORDER_BOOK_DEPTH', 'FUNDING_CHECK_INTERVAL', 'MAX_HOLDING_HOURS']:
             value = int(text)
-        elif setting_key in ['MIN_VOLUME_USD', 'MIN_ENTRY_AMOUNT_USDT', 'MAX_ENTRY_AMOUNT_USDT', 'MIN_NET_PROFIT_USD']:
+        elif setting_key in ['MIN_VOLUME_USD', 'MIN_ENTRY_AMOUNT_USDT', 'MAX_ENTRY_AMOUNT_USDT', 'MIN_NET_PROFIT_USD',
+                             'MIN_ORDER_BOOK_VOLUME']:
             value = float(text)
         else:
             value = text
@@ -2816,6 +3566,9 @@ def main():
             ],
             COIN_SELECTION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_coin_selection)
+            ],
+            ARBITRAGE_LIST: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_arbitrage_list)
             ]
         },
         fallbacks=[CommandHandler("cancel", cancel)]
