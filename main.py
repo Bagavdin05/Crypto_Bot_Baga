@@ -24,77 +24,77 @@ import numpy as np
 TELEGRAM_TOKEN = "7990034184:AAFTx--E5GE0NIPA0Yghr6KpBC80aVtSACs"
 TELEGRAM_CHAT_IDS = ["1167694150", "7916502470", "5381553894", "1111230981"]
 
-# Конфигурация спотового арбитража (по умолчанию)
+# ОБНОВЛЕННЫЕ НАСТРОЙКИ ДЛЯ ДЕПОЗИТА $180
 DEFAULT_SPOT_SETTINGS = {
-    "THRESHOLD_PERCENT": 0.5,
-    "MAX_THRESHOLD_PERCENT": 40,
-    "CHECK_INTERVAL": 30,
+    "THRESHOLD_PERCENT": 0.3,           # Уменьшен порог для большего количества связок
+    "MAX_THRESHOLD_PERCENT": 15,        # Уменьшен максимальный порог для снижения рисков
+    "CHECK_INTERVAL": 25,               # Уменьшен интервал для более быстрого обнаружения
     "MIN_EXCHANGES_FOR_PAIR": 2,
-    "MIN_VOLUME_USD": 500000,
-    "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 500,
-    "MAX_IMPACT_PERCENT": 0.5,
-    "ORDER_BOOK_DEPTH": 10,
-    "MIN_NET_PROFIT_USD": 6,
+    "MIN_VOLUME_USD": 100000,           # Уменьшен минимальный объем
+    "MIN_ENTRY_AMOUNT_USDT": 1,         # Минимальная сумма входа $1
+    "MAX_ENTRY_AMOUNT_USDT": 50,        # Максимальная сумма входа $50 (риск 28% от депозита)
+    "MAX_IMPACT_PERCENT": 0.8,          # Увеличен допустимый impact
+    "ORDER_BOOK_DEPTH": 8,              # Уменьшена глубина стакана
+    "MIN_NET_PROFIT_USD": 0.5,          # Уменьшена минимальная прибыль до $0.5
     "ENABLED": True,
-    "PRICE_CONVERGENCE_THRESHOLD": 0.5,
+    "PRICE_CONVERGENCE_THRESHOLD": 0.3, # Уменьшен порог сходимости
     "PRICE_CONVERGENCE_ENABLED": True,
-    "VOLATILITY_THRESHOLD": 10.0,
-    "MIN_ORDER_BOOK_VOLUME": 100,
-    "MAX_VOLATILITY_PERCENT": 15.0
+    "VOLATILITY_THRESHOLD": 15.0,       # Увеличен порог волатильности
+    "MIN_ORDER_BOOK_VOLUME": 50,        # Уменьшен минимальный объем стакана
+    "MAX_VOLATILITY_PERCENT": 25.0      # Увеличена максимальная волатильность
 }
 
-# Конфигурация фьючерсного арбитража (по умолчанию)
+# ОБНОВЛЕННЫЕ НАСТРОЙКИ ФЬЮЧЕРСОВ
 DEFAULT_FUTURES_SETTINGS = {
-    "THRESHOLD_PERCENT": 0.5,
-    "MAX_THRESHOLD_PERCENT": 20,
-    "CHECK_INTERVAL": 30,
-    "MIN_VOLUME_USD": 500000,
+    "THRESHOLD_PERCENT": 0.3,
+    "MAX_THRESHOLD_PERCENT": 12,
+    "CHECK_INTERVAL": 25,
+    "MIN_VOLUME_USD": 100000,
     "MIN_EXCHANGES_FOR_PAIR": 2,
-    "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 250,
-    "MIN_NET_PROFIT_USD": 5,
+    "MIN_ENTRY_AMOUNT_USDT": 1,
+    "MAX_ENTRY_AMOUNT_USDT": 40,        # $40 для фьючерсов (риск 22% от депозита)
+    "MIN_NET_PROFIT_USD": 0.5,
     "ENABLED": True,
-    "PRICE_CONVERGENCE_THRESHOLD": 0.5,
+    "PRICE_CONVERGENCE_THRESHOLD": 0.3,
     "PRICE_CONVERGENCE_ENABLED": True,
-    "VOLATILITY_THRESHOLD": 10.0,
-    "MIN_ORDER_BOOK_VOLUME": 100,
-    "FUNDING_RATE_THRESHOLD": 0.01,
-    "MIN_FUNDING_RATE_TO_RECEIVE": -0.005,
-    "IDEAL_FUNDING_SCENARIO": -0.01,
+    "VOLATILITY_THRESHOLD": 15.0,
+    "MIN_ORDER_BOOK_VOLUME": 50,
+    "FUNDING_RATE_THRESHOLD": 0.015,    # Увеличен порог фандинга
+    "MIN_FUNDING_RATE_TO_RECEIVE": -0.008, # Более мягкие условия
+    "IDEAL_FUNDING_SCENARIO": -0.015,
     "FUNDING_CHECK_INTERVAL": 3600,
     "MAX_HOLDING_HOURS": 24,
-    "MAX_IMPACT_PERCENT": 0.5,
-    "MAX_VOLATILITY_PERCENT": 15.0,
-    "RED_FUNDING_THRESHOLD": 0.005
+    "MAX_IMPACT_PERCENT": 0.8,
+    "MAX_VOLATILITY_PERCENT": 25.0,
+    "RED_FUNDING_THRESHOLD": 0.008      # Увеличен порог красного фандинга
 }
 
-# Конфигурация спот-фьючерсного арбитража (по умолчанию) - ОБНОВЛЕНО С ФАНДИНГОМ
+# ОБНОВЛЕННЫЕ НАСТРОЙКИ СПОТ-ФЬЮЧЕРСНОГО АРБИТРАЖА
 DEFAULT_SPOT_FUTURES_SETTINGS = {
-    "THRESHOLD_PERCENT": 0.5,
-    "MAX_THRESHOLD_PERCENT": 20,
-    "CHECK_INTERVAL": 30,
-    "MIN_VOLUME_USD": 500000,
+    "THRESHOLD_PERCENT": 0.3,
+    "MAX_THRESHOLD_PERCENT": 12,
+    "CHECK_INTERVAL": 25,
+    "MIN_VOLUME_USD": 100000,
     "MIN_EXCHANGES_FOR_PAIR": 2,
-    "MIN_ENTRY_AMOUNT_USDT": 5,
-    "MAX_ENTRY_AMOUNT_USDT": 250,
-    "MIN_NET_PROFIT_USD": 5,
+    "MIN_ENTRY_AMOUNT_USDT": 1,
+    "MAX_ENTRY_AMOUNT_USDT": 40,        # $40 для спот-фьючерсов
+    "MIN_NET_PROFIT_USD": 0.5,
     "ENABLED": True,
-    "PRICE_CONVERGENCE_THRESHOLD": 0.5,
+    "PRICE_CONVERGENCE_THRESHOLD": 0.3,
     "PRICE_CONVERGENCE_ENABLED": True,
-    "VOLATILITY_THRESHOLD": 10.0,
-    "MIN_ORDER_BOOK_VOLUME": 100,
-    "MAX_IMPACT_PERCENT": 0.5,
-    "MAX_VOLATILITY_PERCENT": 15.0,
-    # НОВЫЕ НАСТРОЙКИ ФАНДИНГА ДЛЯ СПОТ-ФЬЮЧЕРСНОГО АРБИТРАЖА
-    "FUNDING_RATE_THRESHOLD": 0.01,
-    "MIN_FUNDING_RATE_TO_RECEIVE": 0.001,  # Минимальная ставка финансирования для получения (положительная)
+    "VOLATILITY_THRESHOLD": 15.0,
+    "MIN_ORDER_BOOK_VOLUME": 50,
+    "MAX_IMPACT_PERCENT": 0.8,
+    "MAX_VOLATILITY_PERCENT": 25.0,
+    # НАСТРОЙКИ ФАНДИНГА
+    "FUNDING_RATE_THRESHOLD": 0.015,
+    "MIN_FUNDING_RATE_TO_RECEIVE": 0.0005,  # Минимальная ставка для получения
     "FUNDING_CHECK_INTERVAL": 3600,
     "MAX_HOLDING_HOURS": 24,
-    "RED_FUNDING_THRESHOLD": -0.005  # Порог для отрицательного фандинга
+    "RED_FUNDING_THRESHOLD": -0.008      # Более мягкий порог
 }
 
-# Настройки бирж
+# Настройки бирж (включим больше бирж для большего количества связок)
 EXCHANGE_SETTINGS = {
     "bybit": {"ENABLED": True},
     "mexc": {"ENABLED": True},
@@ -1184,7 +1184,7 @@ def cleanup_old_opportunities():
             del current_arbitrage_opportunities[key]
         if key in arbitrage_start_times:
             del arbitrage_start_times[key]
-        logger.debug(f"Удалена устаревшая связка: {key}")
+        logger.debug(f"Удалена устаревшая связку: {key}")
 
 
 def load_markets_sync(exchange):
@@ -2718,7 +2718,7 @@ async def get_coin_prices(coin: str, market_type: str):
         response += f"<i>Отфильтровано бирж: {filtered_out}</i>\n\n"
 
         # Добавляем данные по каждой бирже
-        for idx, item in enumerate(results, 1):
+        for idx, item in enumerate(results, start=1):
             # Сделаем название биржи кликабельной ссылкой
             response += (
                 f"{item['emoji']} <a href='{item['url']}'><b>{item['name']}</b></a>\n"
