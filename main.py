@@ -32,7 +32,7 @@ DEFAULT_SPOT_SETTINGS = {
     "MIN_EXCHANGES_FOR_PAIR": 2,
     "MIN_VOLUME_USD": 100000,           # Уменьшен минимальный объем
     "MIN_ENTRY_AMOUNT_USDT": 1,         # Минимальная сумма входа $1
-    "MAX_ENTRY_AMOUNT_USDT": 50,        # Максимальная сумма входа $50 (риск 28% от депозита)
+    "MAX_ENTRY_AMOUNT_USDT": 200,        # Максимальная сумма входа $50 (риск 28% от депозита)
     "MAX_IMPACT_PERCENT": 0.8,          # Увеличен допустимый impact
     "ORDER_BOOK_DEPTH": 8,              # Уменьшена глубина стакана
     "MIN_NET_PROFIT_USD": 0.5,          # Уменьшена минимальная прибыль до $0.5
@@ -52,7 +52,7 @@ DEFAULT_FUTURES_SETTINGS = {
     "MIN_VOLUME_USD": 100000,
     "MIN_EXCHANGES_FOR_PAIR": 2,
     "MIN_ENTRY_AMOUNT_USDT": 1,
-    "MAX_ENTRY_AMOUNT_USDT": 40,        # $40 для фьючерсов (риск 22% от депозита)
+    "MAX_ENTRY_AMOUNT_USDT": 100,        # $40 для фьючерсов (риск 22% от депозита)
     "MIN_NET_PROFIT_USD": 0.5,
     "ENABLED": True,
     "PRICE_CONVERGENCE_THRESHOLD": 0.3,
@@ -77,7 +77,7 @@ DEFAULT_SPOT_FUTURES_SETTINGS = {
     "MIN_VOLUME_USD": 100000,
     "MIN_EXCHANGES_FOR_PAIR": 2,
     "MIN_ENTRY_AMOUNT_USDT": 1,
-    "MAX_ENTRY_AMOUNT_USDT": 40,        # $40 для спот-фьючерсов
+    "MAX_ENTRY_AMOUNT_USDT": 100,        # $40 для спот-фьючерсов
     "MIN_NET_PROFIT_USD": 0.5,
     "ENABLED": True,
     "PRICE_CONVERGENCE_THRESHOLD": 0.3,
@@ -106,7 +106,10 @@ EXCHANGE_SETTINGS = {
     "bingx": {"ENABLED": True},
     "phemex": {"ENABLED": True},
     "coinex": {"ENABLED": True},
-    "blofin": {"ENABLED": True}
+    "blofin": {"ENABLED": True},
+    "bitmex": {"ENABLED": True},
+    "bitmart": {"ENABLED": True},
+    "xt": {"ENABLED": True}
 }
 
 # Состояния для ConversationHandler
@@ -317,6 +320,30 @@ SPOT_EXCHANGES = {
         "deposit_url": lambda c: f"https://www.blofin.com/assets/deposit/{c}",
         "emoji": "🏛",
         "blacklist": []
+    },
+    "bitmart": {
+        "api": ccxt.bitmart({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT",
+        "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
+        "taker_fee": 0.002,
+        "maker_fee": 0.002,
+        "url_format": lambda s: f"https://www.bitmart.com/trade/en?symbol={s.replace('/', '_')}",
+        "withdraw_url": lambda c: f"https://www.bitmart.com/assets/withdraw/{c}",
+        "deposit_url": lambda c: f"https://www.bitmart.com/assets/deposit/{c}",
+        "emoji": "🏛",
+        "blacklist": []
+    },
+    "xt": {
+        "api": ccxt.xt({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT",
+        "is_spot": lambda m: m.get('spot', False) and m['quote'] == 'USDT',
+        "taker_fee": 0.002,
+        "maker_fee": 0.002,
+        "url_format": lambda s: f"https://www.xt.com/trade/{s.replace('/', '_').lower()}",
+        "withdraw_url": lambda c: f"https://www.xt.com/assets/withdraw/{c}",
+        "deposit_url": lambda c: f"https://www.xt.com/assets/deposit/{c}",
+        "emoji": "🏛",
+        "blacklist": []
     }
 }
 
@@ -462,9 +489,42 @@ FUTURES_EXCHANGES = {
         "blacklist": [],
         "emoji": "📊",
         "supports_funding": True
+    },
+    "bitmex": {
+        "api": ccxt.bitmex({"enableRateLimit": True}),
+        "symbol_format": lambda s: f"{s}/USDT:USDT",
+        "is_futures": lambda m: (
+            m.get('swap', False) and 
+            m.get('linear', False) and 
+            m['settle'] == 'USDT'
+        ),
+        "taker_fee": 0.00075,
+        "maker_fee": 0.0002,
+        "url_format": lambda s: f"https://www.bitmex.com/app/trade/{s.replace('/', '').replace(':USDT', '')}",
+        "blacklist": [],
+        "emoji": "📊",
+        "supports_funding": True
+    },
+    "xt": {
+        "api": ccxt.xt({
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "future"
+            }
+        }),
+        "symbol_format": lambda s: f"{s}/USDT:USDT",
+        "is_futures": lambda m: (
+            m.get('swap', False) and 
+            m['settle'] == 'USDT'
+        ),
+        "taker_fee": 0.0006,
+        "maker_fee": 0.0002,
+        "url_format": lambda s: f"https://www.xt.com/trade/futures/{s.replace('/', '_').replace(':USDT', '').lower()}",
+        "blacklist": [],
+        "emoji": "📊",
+        "supports_funding": True
     }
 }
-
 
 # Reply-клавиатуры
 def get_main_keyboard():
@@ -1041,7 +1101,7 @@ async def get_current_arbitrage_opportunities():
     # Используем только отправленные связки и фильтруем по времени (максимум 1 час)
     filtered_opportunities = {}
     current_time = time.time()
-    max_duration = 3600  # 1 час в секундах
+    max_duration = 1200  # 20 мин в секундах
 
     for key, opportunity in sent_arbitrage_opportunities.items():
         # Проверяем, что связка не устарела (не старше 1 часа)
