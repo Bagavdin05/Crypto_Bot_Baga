@@ -1650,29 +1650,37 @@ async def check_spot_arbitrage():
                     if len(price_data) < SETTINGS['SPOT']['MIN_EXCHANGES_FOR_PAIR']:
                         continue
 
-                    # Сортируем биржи по цене из стакана
-                    sorted_data = sorted(price_data.items(),
-                                         key=lambda x: x[1]['price'])
-                    min_ex = sorted_data[0]  # Самая низкая цена (покупка)
-                    max_ex = sorted_data[-1]  # Самая высокая цена (продажа)
+                    # Сортируем биржи по цене покупки (best_bid) и цене продажи (best_ask)
+                    sorted_by_bid = sorted(price_data.items(),
+                                         key=lambda x: x[1]['best_bid'], reverse=True)
+                    sorted_by_ask = sorted(price_data.items(),
+                                         key=lambda x: x[1]['best_ask'])
 
-                    # Рассчитываем спред
-                    spread = (max_ex[1]['price'] -
-                              min_ex[1]['price']) / min_ex[1]['price'] * 100
+                    # Самая высокая цена покупки (bid) - где лучше всего продавать
+                    best_bid_ex = sorted_by_bid[0]
+                    # Самая низкая цена продажи (ask) - где лучше всего покупать
+                    best_ask_ex = sorted_by_ask[0]
+
+                    # Пропускаем если это одна и та же биржа
+                    if best_bid_ex[0] == best_ask_ex[0]:
+                        continue
+
+                    # Рассчитываем спред между лучшей ценой покупки и лучшей ценой продажи
+                    spread = (best_bid_ex[1]['best_bid'] - best_ask_ex[1]['best_ask']) / best_ask_ex[1]['best_ask'] * 100
 
                     logger.debug(
-                        f"Пара {base}: спред {spread:.2f}% (min: {min_ex[0]} {min_ex[1]['price']}, max: {max_ex[0]} {max_ex[1]['price']})"
+                        f"Пара {base}: спред {spread:.2f}% (покупка: {best_ask_ex[0]} {best_ask_ex[1]['best_ask']}, продажа: {best_bid_ex[0]} {best_bid_ex[1]['best_bid']})"
                     )
 
                     # Обновляем информацию о текущих арбитражных возможностях (только для отправленных связок)
-                    key = f"SPOT_{base}_{min_ex[0]}_{max_ex[0]}"
+                    key = f"SPOT_{base}_{best_ask_ex[0]}_{best_bid_ex[0]}"
                     if key in sent_arbitrage_opportunities:
                         # Получаем текущую возможность и сохраняем существующие данные
                         current_opp = sent_arbitrage_opportunities[key]
                         update_current_arbitrage_opportunities(
-                            'SPOT', base, min_ex[0], max_ex[0], spread,
-                            min_ex[1]['price'], max_ex[1]['price'],
-                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            'SPOT', base, best_ask_ex[0], best_bid_ex[0], spread,
+                            best_ask_ex[1]['best_ask'], best_bid_ex[1]['best_bid'],  # Цена покупки и продажи
+                            volume_data.get(best_ask_ex[0]), volume_data.get(best_bid_ex[0]),
                             current_opp.get('min_entry_amount'),
                             current_opp.get('max_entry_amount'),
                             current_opp.get('profit_min'),
@@ -1682,20 +1690,20 @@ async def check_spot_arbitrage():
                         )
 
                     # Проверяем сходимость цен для уведомления (только для отправленных связок)
-                    duration = update_arbitrage_duration('SPOT', base, min_ex[0], max_ex[0], spread)
+                    duration = update_arbitrage_duration('SPOT', base, best_ask_ex[0], best_bid_ex[0], spread)
                     if duration is not None:
                         await send_price_convergence_notification(
-                            'SPOT', base, min_ex[0], max_ex[0],
-                            min_ex[1]['price'], max_ex[1]['price'], spread,
-                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]), duration
+                            'SPOT', base, best_ask_ex[0], best_bid_ex[0],
+                            best_ask_ex[1]['best_ask'], best_bid_ex[1]['best_bid'], spread,
+                            volume_data.get(best_ask_ex[0]), volume_data.get(best_bid_ex[0]), duration
                         )
 
                     if SETTINGS['SPOT']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['SPOT']['MAX_THRESHOLD_PERCENT']:
                         # Проверяем доступность депозита и вывода
                         deposit_available = await check_deposit_withdrawal_status(
-                            SPOT_EXCHANGES_LOADED[max_ex[0]]["api"], base, 'deposit')
+                            SPOT_EXCHANGES_LOADED[best_bid_ex[0]]["api"], base, 'deposit')
                         withdrawal_available = await check_deposit_withdrawal_status(
-                            SPOT_EXCHANGES_LOADED[min_ex[0]]["api"], base, 'withdrawal')
+                            SPOT_EXCHANGES_LOADED[best_ask_ex[0]]["api"], base, 'withdrawal')
 
                         logger.debug(
                             f"Пара {base}: депозит={deposit_available}, вывод={withdrawal_available}"
@@ -1708,10 +1716,10 @@ async def check_spot_arbitrage():
                             continue
 
                         # Получаем стаканы ордеров для расчета доступного объема
-                        buy_exchange = SPOT_EXCHANGES_LOADED[min_ex[0]]["api"]
-                        sell_exchange = SPOT_EXCHANGES_LOADED[max_ex[0]]["api"]
-                        buy_symbol = min_ex[1]['symbol']
-                        sell_symbol = max_ex[1]['symbol']
+                        buy_exchange = SPOT_EXCHANGES_LOADED[best_ask_ex[0]]["api"]  # Покупаем там, где дешевле (low ask)
+                        sell_exchange = SPOT_EXCHANGES_LOADED[best_bid_ex[0]]["api"]  # Продаем там, где дороже (high bid)
+                        buy_symbol = best_ask_ex[1]['symbol']
+                        sell_symbol = best_bid_ex[1]['symbol']
 
                         buy_order_book, sell_order_book = await asyncio.gather(
                             fetch_order_book(buy_exchange, buy_symbol),
@@ -1743,13 +1751,13 @@ async def check_spot_arbitrage():
                             continue
 
                         # Получаем комиссии
-                        buy_fee = SPOT_EXCHANGES_LOADED[min_ex[0]]["config"]["taker_fee"]
-                        sell_fee = SPOT_EXCHANGES_LOADED[max_ex[0]]["config"]["taker_fee"]
+                        buy_fee = SPOT_EXCHANGES_LOADED[best_ask_ex[0]]["config"]["taker_fee"]
+                        sell_fee = SPOT_EXCHANGES_LOADED[best_bid_ex[0]]["config"]["taker_fee"]
 
                         # Рассчитываем минимальную сумму для MIN_NET_PROFIT_USD
                         min_amount_for_profit = calculate_min_entry_amount(
-                            buy_price=min_ex[1]['price'],
-                            sell_price=max_ex[1]['price'],
+                            buy_price=best_ask_ex[1]['best_ask'],  # Покупаем по best_ask
+                            sell_price=best_bid_ex[1]['best_bid'],  # Продаем по best_bid
                             min_profit=SETTINGS['SPOT']['MIN_NET_PROFIT_USD'],
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee)
@@ -1761,7 +1769,7 @@ async def check_spot_arbitrage():
 
                         # Рассчитываем максимально возможную сумму входа на основе доступного объема
                         max_possible_amount = min(
-                            available_volume * min_ex[1]['price'],
+                            available_volume * best_ask_ex[1]['best_ask'],  # Используем цену покупки
                             SETTINGS['SPOT']['MAX_ENTRY_AMOUNT_USDT'],
                             order_book_volume)
 
@@ -1777,16 +1785,16 @@ async def check_spot_arbitrage():
 
                         # Рассчитываем прибыль
                         profit_min = calculate_profit(
-                            buy_price=min_ex[1]['price'],
-                            sell_price=max_ex[1]['price'],
-                            amount=min_entry_amount / min_ex[1]['price'],
+                            buy_price=best_ask_ex[1]['best_ask'],  # Покупаем по best_ask
+                            sell_price=best_bid_ex[1]['best_bid'],  # Продаем по best_bid
+                            amount=min_entry_amount / best_ask_ex[1]['best_ask'],
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee)
 
                         profit_max = calculate_profit(
-                            buy_price=min_ex[1]['price'],
-                            sell_price=max_ex[1]['price'],
-                            amount=max_possible_amount / min_ex[1]['price'],
+                            buy_price=best_ask_ex[1]['best_ask'],  # Покупаем по best_ask
+                            sell_price=best_bid_ex[1]['best_bid'],  # Продаем по best_bid
+                            amount=max_possible_amount / best_ask_ex[1]['best_ask'],
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee)
 
@@ -1804,12 +1812,12 @@ async def check_spot_arbitrage():
                                 return f"${vol / 1_000:.1f}K"
                             return f"${vol:.1f}"
 
-                        min_volume = format_volume(volume_data.get(min_ex[0]))
-                        max_volume = format_volume(volume_data.get(max_ex[0]))
+                        buy_volume_str = format_volume(volume_data.get(best_ask_ex[0]))
+                        sell_volume_str = format_volume(volume_data.get(best_bid_ex[0]))
 
                         safe_base = html.escape(base)
-                        buy_exchange_config = SPOT_EXCHANGES[min_ex[0]]
-                        sell_exchange_config = SPOT_EXCHANGES[max_ex[0]]
+                        buy_exchange_config = SPOT_EXCHANGES[best_ask_ex[0]]
+                        sell_exchange_config = SPOT_EXCHANGES[best_bid_ex[0]]
 
                         buy_url = buy_exchange_config["url_format"](buy_symbol)
                         sell_url = sell_exchange_config["url_format"](
@@ -1824,12 +1832,12 @@ async def check_spot_arbitrage():
                             f"▫️ <b>Доступный объем:</b> {available_volume:.6f} {safe_base}\n"
                             f"▫️ <b>Объем стакана:</b> ${order_book_volume:.2f}\n"
                             f"▫️ <b>Сумма входа:</b> ${min_entry_amount:.2f}-${max_entry_amount:.2f}\n\n"
-                            f"🟢 <b>Покупка на <a href='{buy_url}'>{min_ex[0].upper()}</a>:</b> ${min_ex[1]['price']:.8f}\n"
-                            f"   <b>Объём:</b> {min_volume}\n"
+                            f"🟢 <b>Покупка на <a href='{buy_url}'>{best_ask_ex[0].upper()}</a>:</b> ${best_ask_ex[1]['best_ask']:.8f}\n"
+                            f"   <b>Объём:</b> {buy_volume_str}\n"
                             f"   <b>Комиссия:</b> {buy_fee * 100:.2f}%\n"
                             f"   <b><a href='{withdraw_url}'>Вывод</a></b>\n\n"
-                            f"🔴 <b>Продажа на <a href='{sell_url}'>{max_ex[0].upper()}</a>:</b> ${max_ex[1]['price']:.8f}\n"
-                            f"   <b>Объём:</b> {max_volume}\n"
+                            f"🔴 <b>Продажа на <a href='{sell_url}'>{best_bid_ex[0].upper()}</a>:</b> ${best_bid_ex[1]['best_bid']:.8f}\n"
+                            f"   <b>Объём:</b> {sell_volume_str}\n"
                             f"   <b>Комиссия:</b> {sell_fee * 100:.2f}%\n"
                             f"   <b><a href='{deposit_url}'>Депозит</a></b>\n\n"
                             f"💰️ <b>Чистая прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f} ({profit_max['percent']:.2f}%)\n\n"
@@ -1844,18 +1852,18 @@ async def check_spot_arbitrage():
 
                         # Добавляем связку в отправленные возможности
                         add_opportunity_to_sent(
-                            'SPOT', base, min_ex[0], max_ex[0], spread,
-                            min_ex[1]['price'], max_ex[1]['price'],
-                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            'SPOT', base, best_ask_ex[0], best_bid_ex[0], spread,
+                            best_ask_ex[1]['best_ask'], best_bid_ex[1]['best_bid'],  # Цены покупки и продажи
+                            volume_data.get(best_ask_ex[0]), volume_data.get(best_bid_ex[0]),
                             min_entry_amount, max_entry_amount, profit_min, profit_max,
                             available_volume, order_book_volume
                         )
 
                         # Обновляем текущие возможности с новой информацией
                         update_current_arbitrage_opportunities(
-                            'SPOT', base, min_ex[0], max_ex[0], spread,
-                            min_ex[1]['price'], max_ex[1]['price'],
-                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            'SPOT', base, best_ask_ex[0], best_bid_ex[0], spread,
+                            best_ask_ex[1]['best_ask'], best_bid_ex[1]['best_bid'],
+                            volume_data.get(best_ask_ex[0]), volume_data.get(best_bid_ex[0]),
                             min_entry_amount, max_entry_amount, profit_min, profit_max,
                             available_volume, order_book_volume
                         )
@@ -2003,26 +2011,36 @@ async def check_futures_arbitrage():
                     if len(price_data) < SETTINGS['FUTURES']['MIN_EXCHANGES_FOR_PAIR']:
                         continue
 
-                    # Сортируем биржи по цене из стакана
-                    sorted_data = sorted(price_data.items(), key=lambda x: x[1]['price'])
-                    min_ex = sorted_data[0]  # Самая низкая цена (покупка)
-                    max_ex = sorted_data[-1]  # Самая высокая цена (продажа)
+                    # Сортируем биржи по цене покупки (best_bid) и цене продажи (best_ask)
+                    sorted_by_bid = sorted(price_data.items(),
+                                         key=lambda x: x[1]['best_bid'], reverse=True)
+                    sorted_by_ask = sorted(price_data.items(),
+                                         key=lambda x: x[1]['best_ask'])
 
-                    # Рассчитываем спред
-                    spread = (max_ex[1]['price'] - min_ex[1]['price']) / min_ex[1]['price'] * 100
+                    # Самая высокая цена покупки (bid) - где лучше всего продавать
+                    best_bid_ex = sorted_by_bid[0]
+                    # Самая низкая цена продажи (ask) - где лучше всего покупать
+                    best_ask_ex = sorted_by_ask[0]
+
+                    # Пропускаем если это одна и та же биржа
+                    if best_bid_ex[0] == best_ask_ex[0]:
+                        continue
+
+                    # Рассчитываем спред между лучшей ценой покупки и лучшей ценой продажи
+                    spread = (best_bid_ex[1]['best_bid'] - best_ask_ex[1]['best_ask']) / best_ask_ex[1]['best_ask'] * 100
 
                     logger.debug(
-                        f"Пара {base}: спред {spread:.2f}% (min: {min_ex[0]} {min_ex[1]['price']}, max: {max_ex[0]} {max_ex[1]['price']})")
+                        f"Пара {base}: спред {spread:.2f}% (покупка: {best_ask_ex[0]} {best_ask_ex[1]['best_ask']}, продажа: {best_bid_ex[0]} {best_bid_ex[1]['best_bid']})")
 
                     # Обновляем информацию о текущих арбитражных возможностях (только для отправленных связок)
-                    key = f"FUTURES_{base}_{min_ex[0]}_{max_ex[0]}"
+                    key = f"FUTURES_{base}_{best_ask_ex[0]}_{best_bid_ex[0]}"
                     if key in sent_arbitrage_opportunities:
                         # Получаем текущую возможность и сохраняем существующие данные
                         current_opp = sent_arbitrage_opportunities[key]
                         update_current_arbitrage_opportunities(
-                            'FUTURES', base, min_ex[0], max_ex[0], spread,
-                            min_ex[1]['price'], max_ex[1]['price'],
-                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            'FUTURES', base, best_ask_ex[0], best_bid_ex[0], spread,
+                            best_ask_ex[1]['best_ask'], best_bid_ex[1]['best_bid'],
+                            volume_data.get(best_ask_ex[0]), volume_data.get(best_bid_ex[0]),
                             current_opp.get('min_entry_amount'),
                             current_opp.get('max_entry_amount'),
                             current_opp.get('profit_min'),
@@ -2034,20 +2052,20 @@ async def check_futures_arbitrage():
                         )
 
                     # Проверяем сходимость цен для уведомления (только для отправленных связок)
-                    duration = update_arbitrage_duration('FUTURES', base, min_ex[0], max_ex[0], spread)
+                    duration = update_arbitrage_duration('FUTURES', base, best_ask_ex[0], best_bid_ex[0], spread)
                     if duration is not None:
                         await send_price_convergence_notification(
-                            'FUTURES', base, min_ex[0], max_ex[0],
-                            min_ex[1]['price'], max_ex[1]['price'], spread,
-                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]), duration
+                            'FUTURES', base, best_ask_ex[0], best_bid_ex[0],
+                            best_ask_ex[1]['best_ask'], best_bid_ex[1]['best_bid'], spread,
+                            volume_data.get(best_ask_ex[0]), volume_data.get(best_bid_ex[0]), duration
                         )
 
                     if SETTINGS['FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['FUTURES'][
                         'MAX_THRESHOLD_PERCENT']:
 
                         # Получаем ставки финансирования для обеих бирж
-                        long_funding = funding_rates.get(base, {}).get(min_ex[0], 0)
-                        short_funding = funding_rates.get(base, {}).get(max_ex[0], 0)
+                        long_funding = funding_rates.get(base, {}).get(best_ask_ex[0], 0)  # Для лонга на бирже покупки
+                        short_funding = funding_rates.get(base, {}).get(best_bid_ex[0], 0)  # Для шорта на бирже продажи
 
                         # Проверяем выгодность финансирования
                         if not is_favorable_funding(long_funding, short_funding):
@@ -2062,10 +2080,10 @@ async def check_futures_arbitrage():
                             continue
 
                         # Получаем стаканы ордеров для фьючерсов
-                        buy_exchange = FUTURES_EXCHANGES_LOADED[min_ex[0]]["api"]
-                        sell_exchange = FUTURES_EXCHANGES_LOADED[max_ex[0]]["api"]
-                        buy_symbol = min_ex[1]['symbol']
-                        sell_symbol = max_ex[1]['symbol']
+                        buy_exchange = FUTURES_EXCHANGES_LOADED[best_ask_ex[0]]["api"]  # Покупаем там, где дешевле
+                        sell_exchange = FUTURES_EXCHANGES_LOADED[best_bid_ex[0]]["api"]  # Продаем там, где дороже
+                        buy_symbol = best_ask_ex[1]['symbol']
+                        sell_symbol = best_bid_ex[1]['symbol']
 
                         buy_order_book, sell_order_book = await asyncio.gather(
                             fetch_order_book(buy_exchange, buy_symbol, depth=10),
@@ -2089,13 +2107,13 @@ async def check_futures_arbitrage():
                             continue
 
                         # Получаем комиссии
-                        buy_fee = FUTURES_EXCHANGES_LOADED[min_ex[0]]["config"]["taker_fee"]
-                        sell_fee = FUTURES_EXCHANGES_LOADED[max_ex[0]]["config"]["taker_fee"]
+                        buy_fee = FUTURES_EXCHANGES_LOADED[best_ask_ex[0]]["config"]["taker_fee"]
+                        sell_fee = FUTURES_EXCHANGES_LOADED[best_bid_ex[0]]["config"]["taker_fee"]
 
                         # Рассчитываем минимальную сумму для MIN_NET_PROFIT_USD
                         min_amount_for_profit = calculate_min_entry_amount(
-                            buy_price=min_ex[1]['price'],
-                            sell_price=max_ex[1]['price'],
+                            buy_price=best_ask_ex[1]['best_ask'],  # Покупаем по best_ask
+                            sell_price=best_bid_ex[1]['best_bid'],  # Продаем по best_bid
                             min_profit=SETTINGS['FUTURES']['MIN_NET_PROFIT_USD'],
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee
@@ -2107,7 +2125,7 @@ async def check_futures_arbitrage():
 
                         # Рассчитываем максимально возможную сумму входа
                         max_possible_amount = min(
-                            available_volume * min_ex[1]['price'],
+                            available_volume * best_ask_ex[1]['best_ask'],  # Используем цену покупки
                             SETTINGS['FUTURES']['MAX_ENTRY_AMOUNT_USDT'],
                             order_book_volume)
 
@@ -2120,17 +2138,17 @@ async def check_futures_arbitrage():
 
                         # Рассчитываем базовую прибыль
                         profit_min = calculate_profit(
-                            buy_price=min_ex[1]['price'],
-                            sell_price=max_ex[1]['price'],
-                            amount=min_entry_amount / min_ex[1]['price'],
+                            buy_price=best_ask_ex[1]['best_ask'],  # Покупаем по best_ask
+                            sell_price=best_bid_ex[1]['best_bid'],  # Продаем по best_bid
+                            amount=min_entry_amount / best_ask_ex[1]['best_ask'],
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee
                         )
 
                         profit_max = calculate_profit(
-                            buy_price=min_ex[1]['price'],
-                            sell_price=max_ex[1]['price'],
-                            amount=max_possible_amount / min_ex[1]['price'],
+                            buy_price=best_ask_ex[1]['best_ask'],  # Покупаем по best_ask
+                            sell_price=best_bid_ex[1]['best_bid'],  # Продаем по best_bid
+                            amount=max_possible_amount / best_ask_ex[1]['best_ask'],
                             buy_fee_percent=buy_fee,
                             sell_fee_percent=sell_fee
                         )
@@ -2154,15 +2172,15 @@ async def check_futures_arbitrage():
                                 return f"${vol / 1_000:.1f}K"
                             return f"${vol:.1f}"
 
-                        min_volume = format_volume(volume_data.get(min_ex[0]))
-                        max_volume = format_volume(volume_data.get(max_ex[0]))
+                        buy_volume_str = format_volume(volume_data.get(best_ask_ex[0]))
+                        sell_volume_str = format_volume(volume_data.get(best_bid_ex[0]))
 
                         safe_base = html.escape(base)
-                        buy_exchange_config = FUTURES_EXCHANGES[min_ex[0]]
-                        sell_exchange_config = FUTURES_EXCHANGES[max_ex[0]]
+                        buy_exchange_config = FUTURES_EXCHANGES[best_ask_ex[0]]
+                        sell_exchange_config = FUTURES_EXCHANGES[best_bid_ex[0]]
 
-                        buy_url = buy_exchange_config["url_format"](min_ex[1]['symbol'].replace(':USDT', ''))
-                        sell_url = sell_exchange_config["url_format"](max_ex[1]['symbol'].replace(':USDT', ''))
+                        buy_url = buy_exchange_config["url_format"](buy_symbol.replace(':USDT', ''))
+                        sell_url = sell_exchange_config["url_format"](sell_symbol.replace(':USDT', ''))
 
                         # Рассчитываем оценку финансирования
                         funding_score = calculate_funding_score(long_funding, short_funding)
@@ -2179,11 +2197,11 @@ async def check_futures_arbitrage():
                             f"▫️ <b>Объем стакана:</b> ${order_book_volume:.2f}\n"
                             f"▫️ <b>Сумма входа:</b> ${min_entry_amount:.2f}-${max_entry_amount:.2f}\n"
                             f"▫️ {funding_emoji} <b>Фандинг:</b> лонг {long_funding:.4f}% | шорт {short_funding:.4f}% | общий {funding_score:.4f}%\n\n"
-                            f"🟢 <b>Лонг на <a href='{buy_url}'>{min_ex[0].upper()}</a>:</b> ${min_ex[1]['price']:.8f}\n"
-                            f"   <b>Объём:</b> {min_volume}\n"
+                            f"🟢 <b>Лонг на <a href='{buy_url}'>{best_ask_ex[0].upper()}</a>:</b> ${best_ask_ex[1]['best_ask']:.8f}\n"
+                            f"   <b>Объём:</b> {buy_volume_str}\n"
                             f"   <b>Комиссия:</b> {buy_fee * 100:.3f}%\n\n"
-                            f"🔴 <b>Шорт на <a href='{sell_url}'>{max_ex[0].upper()}</a>:</b> ${max_ex[1]['price']:.8f}\n"
-                            f"   <b>Объём:</b> {max_volume}\n"
+                            f"🔴 <b>Шорт на <a href='{sell_url}'>{best_bid_ex[0].upper()}</a>:</b> ${best_bid_ex[1]['best_bid']:.8f}\n"
+                            f"   <b>Объём:</b> {sell_volume_str}\n"
                             f"   <b>Комиссия:</b> {sell_fee * 100:.3f}%\n\n"
                             f"💰 <b>Базовая прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f}\n"
                             f"💎 <b>С учетом фандинга:</b> ${effective_profit_min:.2f}-${effective_profit_max:.2f} ({profit_max['percent']:.2f}%)\n\n"
@@ -2197,9 +2215,9 @@ async def check_futures_arbitrage():
 
                         # Добавляем связку в отправленные возможности
                         add_opportunity_to_sent(
-                            'FUTURES', base, min_ex[0], max_ex[0], spread,
-                            min_ex[1]['price'], max_ex[1]['price'],
-                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            'FUTURES', base, best_ask_ex[0], best_bid_ex[0], spread,
+                            best_ask_ex[1]['best_ask'], best_bid_ex[1]['best_bid'],
+                            volume_data.get(best_ask_ex[0]), volume_data.get(best_bid_ex[0]),
                             min_entry_amount, max_entry_amount, profit_min, profit_max,
                             available_volume, order_book_volume,
                             long_funding, short_funding
@@ -2207,9 +2225,9 @@ async def check_futures_arbitrage():
 
                         # Обновляем текущие возможности с новой информацией
                         update_current_arbitrage_opportunities(
-                            'FUTURES', base, min_ex[0], max_ex[0], spread,
-                            min_ex[1]['price'], max_ex[1]['price'],
-                            volume_data.get(min_ex[0]), volume_data.get(max_ex[0]),
+                            'FUTURES', base, best_ask_ex[0], best_bid_ex[0], spread,
+                            best_ask_ex[1]['best_ask'], best_bid_ex[1]['best_bid'],
+                            volume_data.get(best_ask_ex[0]), volume_data.get(best_bid_ex[0]),
                             min_entry_amount, max_entry_amount, profit_min, profit_max,
                             available_volume, order_book_volume,
                             long_funding, short_funding
@@ -2412,25 +2430,27 @@ async def check_spot_futures_arbitrage():
                     if not spot_price_data or not futures_price_data:
                         continue
 
-                    # Находим лучшие цены
-                    min_spot = min(spot_price_data.items(), key=lambda x: x[1]['price'])
-                    max_futures = max(futures_price_data.items(), key=lambda x: x[1]['price'])
+                    # Находим лучшие цены для спота и фьючерсов
+                    # Для спота: ищем самую низкую цену продажи (best_ask) - где лучше покупать
+                    best_spot_ask = min(spot_price_data.items(), key=lambda x: x[1]['best_ask'])
+                    # Для фьючерсов: ищем самую высокую цену покупки (best_bid) - где лучше продавать
+                    best_futures_bid = max(futures_price_data.items(), key=lambda x: x[1]['best_bid'])
 
                     # Рассчитываем спред
-                    spread = (max_futures[1]['price'] - min_spot[1]['price']) / min_spot[1]['price'] * 100
+                    spread = (best_futures_bid[1]['best_bid'] - best_spot_ask[1]['best_ask']) / best_spot_ask[1]['best_ask'] * 100
 
                     logger.debug(
-                        f"Пара {base}: спред {spread:.2f}% (spot: {min_spot[0]} {min_spot[1]['price']}, futures: {max_futures[0]} {max_futures[1]['price']})")
+                        f"Пара {base}: спред {spread:.2f}% (spot: {best_spot_ask[0]} {best_spot_ask[1]['best_ask']}, futures: {best_futures_bid[0]} {best_futures_bid[1]['best_bid']})")
 
                     # Обновляем информацию о текущих арбитражных возможностях (только для отправленных связок)
-                    key = f"SPOT_FUTURES_{base}_{min_spot[0]}_{max_futures[0]}"
+                    key = f"SPOT_FUTURES_{base}_{best_spot_ask[0]}_{best_futures_bid[0]}"
                     if key in sent_arbitrage_opportunities:
                         # Получаем текущую возможность и сохраняем существующие данные
                         current_opp = sent_arbitrage_opportunities[key]
                         update_current_arbitrage_opportunities(
-                            'SPOT_FUTURES', base, min_spot[0], max_futures[0], spread,
-                            min_spot[1]['price'], max_futures[1]['price'],
-                            spot_volume_data.get(min_spot[0]), futures_volume_data.get(max_futures[0]),
+                            'SPOT_FUTURES', base, best_spot_ask[0], best_futures_bid[0], spread,
+                            best_spot_ask[1]['best_ask'], best_futures_bid[1]['best_bid'],
+                            spot_volume_data.get(best_spot_ask[0]), futures_volume_data.get(best_futures_bid[0]),
                             current_opp.get('min_entry_amount'),
                             current_opp.get('max_entry_amount'),
                             current_opp.get('profit_min'),
@@ -2442,19 +2462,19 @@ async def check_spot_futures_arbitrage():
                         )
 
                     # Проверяем сходимость цен для уведомления (только для отправленных связок)
-                    duration = update_arbitrage_duration('SPOT_FUTURES', base, min_spot[0], max_futures[0], spread)
+                    duration = update_arbitrage_duration('SPOT_FUTURES', base, best_spot_ask[0], best_futures_bid[0], spread)
                     if duration is not None:
                         await send_price_convergence_notification(
-                            'SPOT_FUTURES', base, min_spot[0], max_futures[0],
-                            min_spot[1]['price'], max_futures[1]['price'], spread,
-                            spot_volume_data.get(min_spot[0]), futures_volume_data.get(max_futures[0]), duration
+                            'SPOT_FUTURES', base, best_spot_ask[0], best_futures_bid[0],
+                            best_spot_ask[1]['best_ask'], best_futures_bid[1]['best_bid'], spread,
+                            spot_volume_data.get(best_spot_ask[0]), futures_volume_data.get(best_futures_bid[0]), duration
                         )
 
                     if SETTINGS['SPOT_FUTURES']['THRESHOLD_PERCENT'] <= spread <= SETTINGS['SPOT_FUTURES'][
                         'MAX_THRESHOLD_PERCENT']:
 
                         # Получаем ставку финансирования для фьючерсной биржи (где шортим)
-                        short_funding = funding_rates.get(base, {}).get(max_futures[0], 0)
+                        short_funding = funding_rates.get(base, {}).get(best_futures_bid[0], 0)
 
                         # ПРОВЕРКА ФАНДИНГА: пропускаем связки с отрицательным или нулевым фандингом
                         if not is_favorable_spot_futures_funding(short_funding):
@@ -2464,19 +2484,19 @@ async def check_spot_futures_arbitrage():
 
                         # Проверяем доступность депозита и вывода для спота
                         deposit_available = await check_deposit_withdrawal_status(
-                            SPOT_EXCHANGES_LOADED[min_spot[0]]["api"], base, 'deposit')
+                            SPOT_EXCHANGES_LOADED[best_spot_ask[0]]["api"], base, 'deposit')
                         withdrawal_available = await check_deposit_withdrawal_status(
-                            SPOT_EXCHANGES_LOADED[min_spot[0]]["api"], base, 'withdrawal')
+                            SPOT_EXCHANGES_LOADED[best_spot_ask[0]]["api"], base, 'withdrawal')
 
                         if not (deposit_available and withdrawal_available):
                             logger.debug(f"Пропускаем {base}: депозит или вывод недоступен")
                             continue
 
                         # Получаем стаканы ордеров
-                        spot_exchange = SPOT_EXCHANGES_LOADED[min_spot[0]]["api"]
-                        futures_exchange = FUTURES_EXCHANGES_LOADED[max_futures[0]]["api"]
-                        spot_symbol = min_spot[1]['symbol']
-                        futures_symbol = max_futures[1]['symbol']
+                        spot_exchange = SPOT_EXCHANGES_LOADED[best_spot_ask[0]]["api"]
+                        futures_exchange = FUTURES_EXCHANGES_LOADED[best_futures_bid[0]]["api"]
+                        spot_symbol = best_spot_ask[1]['symbol']
+                        futures_symbol = best_futures_bid[1]['symbol']
 
                         spot_order_book, futures_order_book = await asyncio.gather(
                             fetch_order_book(spot_exchange, spot_symbol),
@@ -2500,13 +2520,13 @@ async def check_spot_futures_arbitrage():
                             continue
 
                         # Получаем комиссии
-                        spot_fee = SPOT_EXCHANGES_LOADED[min_spot[0]]["config"]["taker_fee"]
-                        futures_fee = FUTURES_EXCHANGES_LOADED[max_futures[0]]["config"]["taker_fee"]
+                        spot_fee = SPOT_EXCHANGES_LOADED[best_spot_ask[0]]["config"]["taker_fee"]
+                        futures_fee = FUTURES_EXCHANGES_LOADED[best_futures_bid[0]]["config"]["taker_fee"]
 
                         # Рассчитываем минимальную сумму для MIN_NET_PROFIT_USD
                         min_amount_for_profit = calculate_min_entry_amount(
-                            buy_price=min_spot[1]['price'],
-                            sell_price=max_futures[1]['price'],
+                            buy_price=best_spot_ask[1]['best_ask'],  # Покупаем по best_ask спота
+                            sell_price=best_futures_bid[1]['best_bid'],  # Продаем по best_bid фьючерсов
                             min_profit=SETTINGS['SPOT_FUTURES']['MIN_NET_PROFIT_USD'],
                             buy_fee_percent=spot_fee,
                             sell_fee_percent=futures_fee
@@ -2518,7 +2538,7 @@ async def check_spot_futures_arbitrage():
 
                         # Рассчитываем максимально возможную сумму входа
                         max_possible_amount = min(
-                            available_volume * min_spot[1]['price'],
+                            available_volume * best_spot_ask[1]['best_ask'],  # Используем цену покупки
                             SETTINGS['SPOT_FUTURES']['MAX_ENTRY_AMOUNT_USDT'],
                             order_book_volume)
 
@@ -2531,17 +2551,17 @@ async def check_spot_futures_arbitrage():
 
                         # Рассчитываем базовую прибыль
                         profit_min = calculate_profit(
-                            buy_price=min_spot[1]['price'],
-                            sell_price=max_futures[1]['price'],
-                            amount=min_entry_amount / min_spot[1]['price'],
+                            buy_price=best_spot_ask[1]['best_ask'],  # Покупаем по best_ask спота
+                            sell_price=best_futures_bid[1]['best_bid'],  # Продаем по best_bid фьючерсов
+                            amount=min_entry_amount / best_spot_ask[1]['best_ask'],
                             buy_fee_percent=spot_fee,
                             sell_fee_percent=futures_fee
                         )
 
                         profit_max = calculate_profit(
-                            buy_price=min_spot[1]['price'],
-                            sell_price=max_futures[1]['price'],
-                            amount=max_possible_amount / min_spot[1]['price'],
+                            buy_price=best_spot_ask[1]['best_ask'],  # Покупаем по best_ask спота
+                            sell_price=best_futures_bid[1]['best_bid'],  # Продаем по best_bid фьючерсов
+                            amount=max_possible_amount / best_spot_ask[1]['best_ask'],
                             buy_fee_percent=spot_fee,
                             sell_fee_percent=futures_fee
                         )
@@ -2565,16 +2585,16 @@ async def check_spot_futures_arbitrage():
                                 return f"${vol / 1_000:.1f}K"
                             return f"${vol:.1f}"
 
-                        spot_volume_str = format_volume(spot_volume_data.get(min_spot[0]))
-                        futures_volume_str = format_volume(futures_volume_data.get(max_futures[0]))
+                        spot_volume_str = format_volume(spot_volume_data.get(best_spot_ask[0]))
+                        futures_volume_str = format_volume(futures_volume_data.get(best_futures_bid[0]))
 
                         safe_base = html.escape(base)
-                        spot_exchange_config = SPOT_EXCHANGES[min_spot[0]]
-                        futures_exchange_config = FUTURES_EXCHANGES[max_futures[0]]
+                        spot_exchange_config = SPOT_EXCHANGES[best_spot_ask[0]]
+                        futures_exchange_config = FUTURES_EXCHANGES[best_futures_bid[0]]
 
-                        spot_url = spot_exchange_config["url_format"](min_spot[1]['symbol'])
+                        spot_url = spot_exchange_config["url_format"](best_spot_ask[1]['symbol'])
                         futures_url = futures_exchange_config["url_format"](
-                            max_futures[1]['symbol'].replace(':USDT', ''))
+                            best_futures_bid[1]['symbol'].replace(':USDT', ''))
                         withdraw_url = spot_exchange_config["withdraw_url"](base)
                         deposit_url = spot_exchange_config["deposit_url"](base)
 
@@ -2592,11 +2612,11 @@ async def check_spot_futures_arbitrage():
                             f"▫️ <b>Объем стакана:</b> ${order_book_volume:.2f}\n"
                             f"▫️ <b>Сумма входа:</b> ${min_entry_amount:.2f}-${max_entry_amount:.2f}\n"
                             f"▫️ {funding_emoji} <b>Фандинг (шорт):</b> {short_funding:.4f}%\n\n"
-                            f"🟢 <b>Покупка на споте <a href='{spot_url}'>{min_spot[0].upper()}</a>:</b> ${min_spot[1]['price']:.8f}\n"
+                            f"🟢 <b>Покупка на споте <a href='{spot_url}'>{best_spot_ask[0].upper()}</a>:</b> ${best_spot_ask[1]['best_ask']:.8f}\n"
                             f"   <b>Объём:</b> {spot_volume_str}\n"
                             f"   <b>Комиссия:</b> {spot_fee * 100:.2f}%\n"
                             f"   <b><a href='{withdraw_url}'>Вывод</a> | <a href='{deposit_url}'>Депозит</a></b>\n\n"
-                            f"🔴 <b>Шорт на фьючерсах <a href='{futures_url}'>{max_futures[0].upper()}</a>:</b> ${max_futures[1]['price']:.8f}\n"
+                            f"🔴 <b>Шорт на фьючерсах <a href='{futures_url}'>{best_futures_bid[0].upper()}</a>:</b> ${best_futures_bid[1]['best_bid']:.8f}\n"
                             f"   <b>Объём:</b> {futures_volume_str}\n"
                             f"   <b>Комиссия:</b> {futures_fee * 100:.3f}%\n\n"
                             f"💰 <b>Базовая прибыль:</b> ${profit_min['net']:.2f}-${profit_max['net']:.2f}\n"
@@ -2611,9 +2631,9 @@ async def check_spot_futures_arbitrage():
 
                         # Добавляем связку в отправленные возможности
                         add_opportunity_to_sent(
-                            'SPOT_FUTURES', base, min_spot[0], max_futures[0], spread,
-                            min_spot[1]['price'], max_futures[1]['price'],
-                            spot_volume_data.get(min_spot[0]), futures_volume_data.get(max_futures[0]),
+                            'SPOT_FUTURES', base, best_spot_ask[0], best_futures_bid[0], spread,
+                            best_spot_ask[1]['best_ask'], best_futures_bid[1]['best_bid'],
+                            spot_volume_data.get(best_spot_ask[0]), futures_volume_data.get(best_futures_bid[0]),
                             min_entry_amount, max_entry_amount, profit_min, profit_max,
                             available_volume, order_book_volume,
                             None,  # long_funding не используется в спот-фьючерсном арбитраже
@@ -2622,9 +2642,9 @@ async def check_spot_futures_arbitrage():
 
                         # Обновляем текущие возможности с новой информацией
                         update_current_arbitrage_opportunities(
-                            'SPOT_FUTURES', base, min_spot[0], max_futures[0], spread,
-                            min_spot[1]['price'], max_futures[1]['price'],
-                            spot_volume_data.get(min_spot[0]), futures_volume_data.get(max_futures[0]),
+                            'SPOT_FUTURES', base, best_spot_ask[0], best_futures_bid[0], spread,
+                            best_spot_ask[1]['best_ask'], best_futures_bid[1]['best_bid'],
+                            spot_volume_data.get(best_spot_ask[0]), futures_volume_data.get(best_futures_bid[0]),
                             min_entry_amount, max_entry_amount, profit_min, profit_max,
                             available_volume, order_book_volume,
                             None,  # long_funding не используется
